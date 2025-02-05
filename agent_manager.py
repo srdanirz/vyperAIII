@@ -10,6 +10,8 @@ from agents.data_processing_agent import DataProcessingAgent
 from agents.validation_agent import ValidationAgent
 from agents.research_agent import ResearchAgent
 from agents.agent_communication import AgentCommunicationSystem
+from agents.deepseek_agent import DeepSeekAgent
+
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +44,9 @@ class AgentManager:
             'contentgeneration': ContentGenerationAgent,
             'research': ResearchAgent,
             'dataprocessing': DataProcessingAgent,
-            'validation': ValidationAgent
+            'validation': ValidationAgent,
+            # Agrega tu nuevo agente
+            'deepseek': DeepSeekAgent
         }
 
     async def execute(self, task: str, metadata: Dict[str, Any], workflow: List[Dict[str, Any]]) -> Dict[str, Any]:
