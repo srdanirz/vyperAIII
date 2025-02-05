@@ -11,25 +11,24 @@ logger = logging.getLogger(__name__)
 
 class ServiceIntegrationAgent(BaseAgent):
     """
-    Agent specialized in handling integration with external services
+    Agente que maneja la integración con servicios externos (Google Docs, Slack, etc.)
     """
-    
-    # Mapping of service capabilities
+
     SERVICE_CAPABILITIES = {
         "document_creation": ["google_docs", "microsoft_word", "notion", "dropbox_paper"],
         "presentation": ["google_slides", "microsoft_powerpoint", "prezi"],
         "spreadsheet": ["google_sheets", "microsoft_excel", "airtable"],
-        "email": ["gmail", "outlook", "yahoo_mail"],
-        "job_search": ["linkedin", "indeed", "glassdoor", "monster"],
-        "social_media": ["linkedin", "twitter", "facebook", "instagram"],
-        "cloud_storage": ["google_drive", "dropbox", "onedrive", "box"],
-        "calendar": ["google_calendar", "outlook_calendar"],
-        "project_management": ["trello", "asana", "jira", "monday"],
-        "communication": ["slack", "teams", "discord"]
+        # ...
     }
 
-    def __init__(self, task: str, openai_api_key: str, metadata: Optional[Dict[str, Any]] = None, partial_data: Optional[Dict[str, Any]] = None):
-        super().__init__(task, openai_api_key, metadata, partial_data)
+    def __init__(
+        self,
+        task: str,
+        openai_api_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        shared_data: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(task, openai_api_key, metadata, shared_data)
         self.llm = ChatOpenAI(
             api_key=openai_api_key,
             model="gpt-4-turbo",
@@ -38,40 +37,27 @@ class ServiceIntegrationAgent(BaseAgent):
         self.service_sessions = {}
         self.action_history = []
 
-    async def execute(self) -> Dict[str, Any]:
-        """Execute service integration tasks"""
+    async def _execute(self) -> Dict[str, Any]:
+        """Analiza la tarea para ver qué servicios se requieren, luego los ejecuta."""
         try:
-            # Analyze task to determine required services
             task_analysis = await self._analyze_task_requirements()
-            
-            # Validate and prepare service connections
             services_status = await self._prepare_services(task_analysis["required_services"])
-            
             if "error" in services_status:
                 return services_status
 
-            # Execute the integration workflow
             result = await self._execute_integration_workflow(task_analysis)
-            
-            # Record execution in history
             self._record_execution(task_analysis, result)
-            
             return {
                 "status": "success",
                 "result": result,
                 "services_used": task_analysis["required_services"],
-                "execution_flow": self.action_history,
-                "metadata": {
-                    **self.metadata,
-                    "task_analysis": task_analysis
-                }
+                "execution_flow": self.action_history
             }
 
         except Exception as e:
-            logger.error(f"Error in ServiceIntegrationAgent: {e}")
+            logger.error(f"Error in ServiceIntegrationAgent: {e}", exc_info=True)
             return {
-                "error": str(e),
-                "metadata": self.metadata
+                "error": str(e)
             }
 
     async def _analyze_task_requirements(self) -> Dict[str, Any]:

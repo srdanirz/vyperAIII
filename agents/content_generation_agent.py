@@ -20,8 +20,10 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 class ContentGenerationAgent(BaseAgent):
-    """Agent specialized in flexible content generation with multiple output capabilities"""
-    
+    """
+    Agente especializado en generación de contenido (presentaciones, documentos,
+    infografías, etc.), usando uno o varios modelos de lenguaje.
+    """
     CONTENT_TYPES = {
         "presentation": ["powerpoint", "presentacion", "slides", "pptx", "diapositivas"],
         "document": ["documento", "write", "escribe", "doc", "docx", "texto", "word"],
@@ -34,26 +36,19 @@ class ContentGenerationAgent(BaseAgent):
         "social": ["post", "publicacion", "tweet", "linkedin"]
     }
 
-    def __init__(self, task: str, openai_api_key: str, metadata: Optional[Dict[str, Any]] = None, partial_data: Optional[Dict[str, Any]] = None):
-        super().__init__(task, openai_api_key, metadata)
+    def __init__(
+        self,
+        task: str,
+        openai_api_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        shared_data: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(task, openai_api_key, metadata, shared_data)
         self.llm = ChatOpenAI(
             api_key=openai_api_key,
             model="gpt-4-turbo",
             temperature=0.7
         )
-        self.partial_data = partial_data or {}
-        self.content_type = self._determine_content_type()
-        self.format_handlers = {
-            "presentation": self._create_presentation,
-            "document": self._create_document,
-            "visualization": self._create_visualization,
-            "infographic": self._create_infographic,
-            "report": self._create_report,
-            "summary": self._create_summary,
-            "code": self._create_code,
-            "email": self._create_email,
-            "social": self._create_social_content
-        }
 
     def _determine_content_type(self) -> str:
         """Determine content type from task description"""
@@ -82,39 +77,33 @@ class ContentGenerationAgent(BaseAgent):
         return "document"
 
     async def _execute(self) -> Dict[str, Any]:
-        """Execute content generation with enhanced flexibility"""
+        """
+        Principal método de generación de contenido que incluye:
+          - Análisis inicial (si se requiere)
+          - Planificación de estructura
+          - Generación y formateo del contenido
+        """
         try:
-            # Gather input data from context and other agents
             content_data = await self._gather_content_data()
             if not content_data:
                 content_data = await self._gather_content_data_fallback()
-            
-            # Create content plan based on type and data
+
             content_plan = await self._create_content_plan(content_data)
-            
-            # Generate base content
-            content = await self._generate_content(content_plan)
-            
-            # Format according to type using appropriate handler
-            if self.content_type in self.format_handlers:
-                handler = self.format_handlers[self.content_type]
-                formatted_content = await handler(content)
-            else:
-                formatted_content = {"content": content, "format": "text"}
-            
+            raw_content = await self._generate_content(content_plan)
+
+            # Según el tipo de contenido se aplica un handler específico
+            content_type = self._determine_content_type()
+            handler = self._select_handler(content_type)
+            formatted_content = await handler(raw_content)
+
             return {
                 "result": formatted_content,
-                "content_type": self.content_type,
+                "content_type": content_type,
                 "plan": content_plan,
-                "metadata": {
-                    "generated_at": datetime.now().isoformat(),
-                    "content_structure": content.get("structure"),
-                    "source_data": content_data.get("sources", [])
-                }
+                "generated_at": datetime.now().isoformat()
             }
-
         except Exception as e:
-            logger.error(f"Error in content generation: {e}")
+            logger.error(f"Error in content generation: {e}", exc_info=True)
             return {"error": str(e)}
 
     async def _gather_content_data(self) -> Dict[str, Any]:

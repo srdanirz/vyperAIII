@@ -10,12 +10,10 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.panel import Panel
-from rich.layout import Layout
 from dotenv import load_dotenv
 from team_structure import TeamStructure
 from cache_manager import CacheManager
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
@@ -27,21 +25,43 @@ console = Console()
 logger = logging.getLogger("rich")
 
 class AssistantUI:
+    """
+    Clase principal de interfaz, orquesta la ejecución y despliegue de resultados.
+    """
     def __init__(self):
         self.console = Console()
-        self.layout = Layout()
         self.cache_manager = CacheManager()
 
-    def setup_layout(self):
-        """Setup the UI layout"""
-        self.layout.split(
-            Layout(name="header", size=3),
-            Layout(name="main"),
-            Layout(name="footer", size=3)
-        )
+    async def run_assistant(self, prompt: str, api_key: str):
+        """Ejecuta el flujo del asistente con un prompt y una API Key."""
+        try:
+            team = TeamStructure(api_key)
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=self.console
+            ) as progress:
+                task_id = progress.add_task("Procesando solicitud...", total=None)
+                result = await team.process_request(prompt)
+                progress.remove_task(task_id)
 
-    async def display_messages(self, messages: List[Dict[str, Any]]):
-        """Display messages with better formatting and visual cues"""
+            if result.get("status") == "success":
+                messages = result.get("messages", [])
+                if messages:
+                    await self._display_messages(messages)
+                content_result = result.get("result", {}).get("result", {})
+                await self._handle_generated_content(content_result)
+                self._display_execution_stats(result.get("metadata", {}))
+            else:
+                error_message = result.get("error", "Error desconocido.")
+                self.console.print(f"[red]Error: {error_message}[/red]")
+        except Exception as e:
+            logger.exception("Error en la ejecución del asistente")
+            self.console.print(f"[red]Error: {str(e)}[/red]")
+
+    async def _display_messages(self, messages: List[Dict[str, Any]]):
+        """Despliega mensajes con formateo y separaciones."""
         prefixes = {
             "System": "🔄",
             "Team": "👥",
@@ -58,7 +78,6 @@ class AssistantUI:
             "Validation": "✅",
             "Coordination": "🔄"
         }
-        
         last_speaker = None
         for msg in messages:
             prefix = prefixes.get(msg["from_agent"], "💬")
@@ -78,144 +97,88 @@ class AssistantUI:
                     f"{prefix} [bold]{msg['from_agent']}[/bold]: {content}",
                     highlight=True
                 )
-            
             last_speaker = msg["from_agent"]
-            await asyncio.sleep(0.1)
-
-    async def run_assistant(self, prompt: str, api_key: str):
-        """Run the assistant with dynamic content handling"""
-        try:
-            team = TeamStructure(api_key)
-            
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=self.console
-            ) as progress:
-                task = progress.add_task("Processing request...", total=None)
-                result = await team.process_request(prompt)
-                progress.remove_task(task)
-            
-            if result.get("status") == "success":
-                await self.display_messages(result.get("messages", []))
-                
-                # Handle generated content
-                if "result" in result:
-                    content_result = result["result"].get("result", {})
-                    await self._handle_generated_content(content_result)
-                
-                # Display execution stats
-                self._display_execution_stats(result.get("metadata", {}))
-            else:
-                error_message = result.get("error", "Unknown error occurred")
-                self.console.print(f"[red]Error: {error_message}[/red]")
-
-        except Exception as e:
-            logger.exception("Error in assistant execution")
-            self.console.print(f"[red]Error: {str(e)}[/red]")
+            await asyncio.sleep(0.05)
 
     async def _handle_generated_content(self, content_result: Dict[str, Any]) -> None:
-        """Handle various types of generated content"""
-        if isinstance(content_result, dict):
-            for agent_result in content_result.values():
-                if isinstance(agent_result, dict) and "format" in agent_result and "content" in agent_result:
-                    try:
-                        await self._save_content(agent_result)
-                    except Exception as e:
-                        logger.error(f"Error saving content: {e}")
+        """Procesa y guarda contenido según formato (pptx, docx, etc.)."""
+        if not isinstance(content_result, dict):
+            return
+        for agent_key, agent_val in content_result.items():
+            if isinstance(agent_val, dict) and "format" in agent_val and "content" in agent_val:
+                await self._save_content(agent_val)
 
     async def _save_content(self, content: Dict[str, Any]) -> None:
-        """Save content based on its format"""
-        content_format = content["format"]
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+        """Guarda el contenido en un archivo según su formato."""
         FORMAT_HANDLERS = {
-            "pptx": {"extension": "pptx", "description": "PowerPoint presentation", "mode": "wb"},
-            "docx": {"extension": "docx", "description": "Word document", "mode": "wb"},
-            "pdf": {"extension": "pdf", "description": "PDF document", "mode": "wb"},
-            "png": {"extension": "png", "description": "image", "mode": "wb"},
-            "txt": {"extension": "txt", "description": "text document", "mode": "w"},
-            "json": {"extension": "json", "description": "JSON file", "mode": "w"},
-            "html": {"extension": "html", "description": "HTML document", "mode": "w"},
-            "code": {"extension": "py", "description": "code file", "mode": "w"}
+            "pptx": {"extension": "pptx", "description": "Presentación", "mode": "wb"},
+            "docx": {"extension": "docx", "description": "Documento Word", "mode": "wb"},
+            "pdf": {"extension": "pdf", "description": "PDF", "mode": "wb"},
+            "png": {"extension": "png", "description": "Imagen", "mode": "wb"},
+            "txt": {"extension": "txt", "description": "Texto", "mode": "w"},
+            "json": {"extension": "json", "description": "JSON", "mode": "w"},
+            "html": {"extension": "html", "description": "HTML", "mode": "w"},
+            "code": {"extension": "py", "description": "Código", "mode": "w"}
         }
-
-        if content_format in FORMAT_HANDLERS:
-            handler = FORMAT_HANDLERS[content_format]
-            
-            extension = content.get("language", handler["extension"]) if content_format == "code" else handler["extension"]
-            title = content.get("title", "").lower()
-            title = "".join(c for c in title if c.isalnum() or c in "- _").strip()
-            title = title[:50] if title else "generated"
-            filename = f"{title}_{timestamp}.{extension}"
-            
-            mode = handler["mode"]
-            try:
-                if mode == "wb":
-                    content_bytes = base64.b64decode(content["content"])
-                    with open(filename, mode) as f:
-                        f.write(content_bytes)
-                else:
-                    with open(filename, mode, encoding='utf-8') as f:
-                        if isinstance(content["content"], (dict, list)):
-                            json.dump(content["content"], f, indent=2)
-                        else:
-                            f.write(content["content"])
-                
-                self.console.print(f"\n[green]{handler['description'].capitalize()} saved as: {filename}[/green]")
-                
-            except Exception as e:
-                self.console.print(f"[red]Error saving {handler['description']}: {str(e)}[/red]")
+        fmt = content["format"]
+        handler = FORMAT_HANDLERS.get(fmt)
+        if not handler:
+            self.console.print(f"[yellow]Formato no soportado: {fmt}[/yellow]")
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        title = content.get("title", "generated").strip().replace(" ", "_")[:50]
+        file_name = f"{title}_{timestamp}.{handler['extension']}"
+        mode = handler["mode"]
+        try:
+            if mode == "wb":
+                raw_bytes = base64.b64decode(content["content"])
+                with open(file_name, mode) as f:
+                    f.write(raw_bytes)
+            else:
+                with open(file_name, mode, encoding='utf-8') as f:
+                    if isinstance(content["content"], (dict, list)):
+                        json.dump(content["content"], f, indent=2)
+                    else:
+                        f.write(content["content"])
+            self.console.print(f"[green]{handler['description']} guardado como {file_name}[/green]")
+        except Exception as e:
+            self.console.print(f"[red]Error guardando {handler['description']}: {str(e)}[/red]")
 
     def _display_execution_stats(self, metadata: Dict[str, Any]) -> None:
-        """Display execution statistics"""
-        if "execution_stats" in metadata:
-            stats = metadata["execution_stats"]
-            self.console.print("\n[bold]Execution Statistics:[/bold]")
-            self.console.print(f"Total Time: {stats.get('average_duration', 0):.2f}s")
-            self.console.print(f"Success Rate: {stats.get('success_rate', 0)*100:.1f}%")
+        """Muestra estadísticas de ejecución si las hubiera."""
+        exec_stats = metadata.get("execution_stats")
+        if exec_stats:
+            self.console.print("\n[bold]Estadísticas de Ejecución:[/bold]")
+            success = exec_stats.get("successful_executions", 0)
+            total = exec_stats.get("total_executions", 0)
+            avg_time = exec_stats.get("average_duration", 0.0)
+            self.console.print(f"  - Éxitos: {success}/{total}")
+            self.console.print(f"  - Tiempo promedio: {avg_time:.2f} segundos")
 
 def main():
-    # Initialize
     load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        console.print("[red]Error: OPENAI_API_KEY not found in environment[/red]")
+        console.print("[red]Error: OPENAI_API_KEY no encontrado en variables de entorno[/red]")
         return
 
-    # Get prompt
     prompt = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else None
     if not prompt:
         console.print(Panel(
-            "[yellow]Usage: python main.py \"Your request here\"[/yellow]\n\n"
-            "Examples:\n"
-            "  - python main.py \"Create a presentation about AI\"\n"
-            "  - python main.py \"Write a document about machine learning\"\n"
-            "  - python main.py \"Generate a report on deep learning\"\n"
-            "  - python main.py \"Create a visualization of AI trends\"",
-            title="Assistant Usage",
+            "[yellow]Uso: python main.py \"Tu petición\"[/yellow]\n\n"
+            "Ejemplos:\n"
+            "  - python main.py \"Crea una presentación sobre IA\"\n"
+            "  - python main.py \"Genera un reporte de aprendizaje automático\"",
+            title="Uso del Asistente",
             border_style="blue"
         ))
         return
 
-    # Initialize UI
     ui = AssistantUI()
-    ui.setup_layout()
 
-    # Display header
-    console.print(Panel(
-        "[bold blue]🤖 AI Assistant[/bold blue]",
-        border_style="blue"
-    ))
-    
-    # Display request
-    console.print(Panel(
-        f"{prompt}",
-        title="📝 Request",
-        border_style="green"
-    ))
-    
-    # Run assistant
+    console.print(Panel("[bold blue]🤖 AI Assistant[/bold blue]", border_style="blue"))
+    console.print(Panel(prompt, title="📝 Petición", border_style="green"))
+
     asyncio.run(ui.run_assistant(prompt, api_key))
 
 if __name__ == "__main__":

@@ -1,30 +1,43 @@
-# agents/base_agent.py
+import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
-import logging
 
 logger = logging.getLogger(__name__)
 
 class BaseAgent:
-    """Base class for all agents with standard initialization"""
-    def __init__(self, task: str, openai_api_key: str, metadata: Optional[Dict[str, Any]] = None, partial_data: Optional[Dict[str, Any]] = None):
+    """
+    Clase base para todos los agentes, que provee:
+      - Atributos estándar (task, openai_api_key, metadata, shared_data)
+      - Lógica de ejecución con temporización y manejo de errores
+    """
+    def __init__(
+        self,
+        task: str,
+        openai_api_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        shared_data: Optional[Dict[str, Any]] = None
+    ):
         self.task = task
         self.openai_api_key = openai_api_key
         self.metadata = metadata or {}
-        self.partial_data = partial_data or {}
-        self.execution_start = None
-        self.execution_end = None
+        self.shared_data = shared_data or {}
+        self.execution_start: Optional[datetime] = None
+        self.execution_end: Optional[datetime] = None
         
     async def execute(self) -> Dict[str, Any]:
-        """Execute agent task with lifecycle management"""
+        """
+        Ejecuta la lógica propia del agente en el método interno _execute().
+        Gestiona el tiempo de ejecución y capturas de errores.
+        """
         try:
             self.execution_start = datetime.now()
             result = await self._execute()
-            self.execution_end = datetime.now()
-            
+
+            # Aseguramos que el resultado sea un diccionario
             if not isinstance(result, dict):
                 result = {"result": result}
             
+            self.execution_end = datetime.now()
             execution_time = (self.execution_end - self.execution_start).total_seconds()
             
             return {
@@ -39,13 +52,13 @@ class BaseAgent:
             }
             
         except Exception as e:
-            logger.error(f"Error in {self.__class__.__name__}: {str(e)}")
+            logger.error(f"Error in {self.__class__.__name__}: {str(e)}", exc_info=True)
             return {
                 "error": str(e),
                 "metadata": self.metadata,
                 "agent_type": self.__class__.__name__
             }
-            
+
     async def _execute(self) -> Dict[str, Any]:
-        """To be implemented by each agent"""
-        raise NotImplementedError("Each agent must implement _execute()")
+        """Método que cada agente concreto debe implementar."""
+        raise NotImplementedError("Each agent must implement _execute().")

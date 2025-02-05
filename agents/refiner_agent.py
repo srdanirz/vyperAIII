@@ -8,109 +8,60 @@ logger = logging.getLogger(__name__)
 
 class RefinerAgent(BaseAgent):
     """
-    Agent for refining queries and improving search strategies
+    Agente para refinar queries y mejorar estrategias de búsqueda.
     """
-    def __init__(self, task: str, openai_api_key: str, partial_data: dict = None, metadata: dict = None):
-        super().__init__(task, metadata)
-        self.openai_api_key = openai_api_key
-        self.partial_data = partial_data or {}
+    def __init__(
+        self,
+        task: str,
+        openai_api_key: str,
+        shared_data: Dict[str, Any] = None,
+        metadata: Dict[str, Any] = None
+    ):
+        super().__init__(task, openai_api_key, metadata, shared_data)
         self.llm = ChatOpenAI(
             api_key=openai_api_key,
             model="gpt-4",
             temperature=0
         )
 
-    async def execute(self) -> Dict[str, Any]:
-        """Refine search strategy and optimize query"""
+    async def _execute(self) -> Dict[str, Any]:
+        """Genera un plan de refinamiento basado en la task."""
         try:
-            refinement_result = await self._generate_refinement_plan()
-            refinement_result["metadata"] = self.metadata
-            return refinement_result
+            return await self._generate_refinement_plan()
         except Exception as e:
-            logger.error(f"Error in RefinerAgent: {e}")
-            return {
-                "error": str(e),
-                "metadata": self.metadata
-            }
+            logger.error(f"Error in RefinerAgent: {e}", exc_info=True)
+            return {"error": str(e)}
 
     async def _generate_refinement_plan(self) -> Dict[str, Any]:
-        """Generate a detailed refinement plan"""
-        prompt = self._create_refinement_prompt()
+        prompt = (
+            f"Analiza esta tarea y provee un plan detallado de refinamiento:\n"
+            f"'{self.task}'"
+        )
+        # Similar a antes, devuelves un JSON con la estrategia
+        messages = [
+            {
+                "role": "system", 
+                "content": (
+                    "Eres un experto en optimización de búsqueda. Retorna la respuesta "
+                    "como JSON con 'search_type', 'sources', 'data_points', 'search_constraints', "
+                    "'expected_format' y 'analysis_notes'."
+                )
+            },
+            {"role": "user", "content": prompt}
+        ]
         
+        response = await self.llm.agenerate([messages])
+        content = response.generations[0][0].message.content.strip()
         try:
-            messages = [
-                {
-                    "role": "system", 
-                    "content": """You are an expert in search optimization and information retrieval.
-                                Always return responses in valid JSON format.
-                                If you include any explanations, include them within the JSON structure."""
-                },
-                {"role": "user", "content": prompt}
-            ]
-            
-            response = await self.llm.agenerate([messages])
-            content = response.generations[0][0].message.content.strip()
-            
-            # Attempt to extract JSON from the response if it contains additional text
-            try:
-                # Try to find JSON-like content between curly braces
-                json_start = content.find('{')
-                json_end = content.rfind('}') + 1
-                if json_start >= 0 and json_end > json_start:
-                    json_content = content[json_start:json_end]
-                    return json.loads(json_content)
-                
-                # If no JSON-like content found, try parsing the whole response
-                return json.loads(content)
-                
-            except json.JSONDecodeError as json_error:
-                logger.error(f"JSON parsing error: {json_error}")
-                logger.error(f"Problematic content: {content}")
-                return self._create_backup_plan(error_details=str(json_error))
-                
-        except Exception as e:
-            logger.error(f"Error generating refinement plan: {e}")
-            return self._create_backup_plan(error_details=str(e))
-
-    def _create_refinement_prompt(self) -> str:
-        """Create the refinement prompt with clear JSON structure requirements"""
-        return f"""
-        Analyze this task and provide a detailed search plan:
-        "{self.task}"
-
-        Return ONLY a JSON object with the following structure, no additional text:
-        {{
-            "search_type": "type of search required",
-            "sources": [
-                {{
-                    "url": "source domain",
-                    "rationale": "why this source is authoritative"
-                }}
-            ],
-            "data_points": ["specific data to collect"],
-            "search_constraints": ["important limitations or filters"],
-            "expected_format": "expected format for results",
-            "analysis_notes": "any additional analysis or explanation"
-        }}
-        """
-
-    def _create_backup_plan(self, error_details: str = None) -> Dict[str, Any]:
-        """Create a backup plan with error tracking when the main plan fails"""
-        backup_plan = {
-            "sources": ["General search engines"],
-            "data_points": ["Basic information about the topic"],
-            "search_type": "general",
-            "search_constraints": ["Focus on recent and reliable sources"],
-            "expected_format": "text summary",
-            "error_recovery": {
-                "triggered": True,
-                "timestamp": self.metadata.get("timestamp", "unknown"),
-                "error_details": error_details
+            # Extracción de JSON
+            start = content.find('{')
+            end = content.rfind('}') + 1
+            if start >= 0 and end > start:
+                return json.loads(content[start:end])
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {e}")
+            return {
+                "error": "Invalid JSON from the LLM",
+                "raw_response": content
             }
-        }
-        
-        if self.partial_data:
-            backup_plan["partial_data_used"] = True
-            backup_plan["available_data"] = list(self.partial_data.keys())
-            
-        return backup_plan

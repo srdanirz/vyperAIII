@@ -1,4 +1,3 @@
-# coordination_agent.py
 import logging
 import asyncio
 from typing import Dict, Any
@@ -9,13 +8,17 @@ logger = logging.getLogger(__name__)
 
 class CoordinationAgent(BaseAgent):
     """
-    Agent specialized in coordinating complex workflows, managing dependencies,
-    and providing final synthesized responses
+    Agente que coordina flujos complejos y sintetiza la respuesta final,
+    combinando resultados de múltiples agentes.
     """
-    def __init__(self, task: str, openai_api_key: str, partial_data: Dict[str, Any] = None, metadata: dict = None):
-        super().__init__(task, metadata)
-        self.openai_api_key = openai_api_key
-        self.partial_data = partial_data or {}
+    def __init__(
+        self,
+        task: str,
+        openai_api_key: str,
+        shared_data: Dict[str, Any] = None,
+        metadata: dict = None
+    ):
+        super().__init__(task, openai_api_key, metadata, shared_data)
         self.llm = ChatOpenAI(
             api_key=openai_api_key,
             model="gpt-4-turbo",
@@ -23,51 +26,30 @@ class CoordinationAgent(BaseAgent):
             max_tokens=2000
         )
 
-    async def execute(self) -> Dict[str, Any]:
-        """Coordinate workflow and synthesize final response"""
+    async def _execute(self) -> Dict[str, Any]:
+        """Coordina los resultados de shared_data para producir una respuesta final."""
         try:
-            # Extract relevant information first
-            simple_query_info = self._get_agent_info('simple_query')
-            research_info = self._get_agent_info('research')
-            validation_info = self._get_agent_info('validation')
-
-            # Procesar tareas en paralelo
+            # Se generan subtareas en paralelo
             tasks = [
                 self._generate_concise_response(),
                 self._generate_detailed_response(),
                 self._extract_key_findings(),
                 self._generate_collaboration_dialogue()
             ]
-
-            # Ejecutar todas las tareas en paralelo
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Extraer resultados
-            concise_response, detailed_response, key_findings, final_dialogue = results
 
-            # Verificar errores
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.error(f"Error in coordination task: {result}")
+            final_data = {}
+            final_data["concise_response"] = results[0] if not isinstance(results[0], Exception) else "Error"
+            final_data["detailed_response"] = results[1] if not isinstance(results[1], Exception) else "Error"
+            final_data["key_findings"] = results[2] if not isinstance(results[2], Exception) else {}
+            final_data["collaboration_dialogue"] = results[3] if not isinstance(results[3], Exception) else {}
 
-            return {
-                "final_response": concise_response if not isinstance(concise_response, Exception) else "Error generating concise response",
-                "detailed_response": detailed_response if not isinstance(detailed_response, Exception) else "Error generating detailed response",
-                "key_findings": key_findings if not isinstance(key_findings, Exception) else {"error": "Error extracting key findings"},
-                "collaboration_dialogue": final_dialogue if not isinstance(final_dialogue, Exception) else {"error": "Error generating dialogue"},
-                "metadata": self.metadata,
-                "source_info": {
-                    "simple_query": simple_query_info,
-                    "research": research_info,
-                    "validation": validation_info
-                }
-            }
+            return final_data
 
         except Exception as e:
-            logger.error(f"Error in CoordinationAgent: {e}")
+            logger.error(f"Error in CoordinationAgent: {e}", exc_info=True)
             return {
-                "error": f"Coordination error: {str(e)}",
-                "metadata": self.metadata
+                "error": str(e)
             }
 
     def _analyze_current_state(self) -> Dict[str, Any]:

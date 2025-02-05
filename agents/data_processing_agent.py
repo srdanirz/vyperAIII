@@ -1,4 +1,3 @@
-# agents/data_processing_agent.py
 import logging
 from typing import Dict, Any, Optional, List
 from langchain_openai import ChatOpenAI
@@ -11,11 +10,17 @@ logger = logging.getLogger(__name__)
 
 class DataProcessingAgent(BaseAgent):
     """
-    Agent specialized in data processing and analysis
+    Agente especializado en el procesamiento de datos,
+    limpieza, transformación y generación de reportes cuantitativos.
     """
-
-    def __init__(self, task: str, openai_api_key: str, metadata: Optional[Dict[str, Any]] = None, partial_data: Optional[Dict[str, Any]] = None):
-        super().__init__(task, openai_api_key, metadata, partial_data)
+    def __init__(
+        self,
+        task: str,
+        openai_api_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        shared_data: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(task, openai_api_key, metadata, shared_data)
         self.llm = ChatOpenAI(
             api_key=openai_api_key,
             model="gpt-4-turbo",
@@ -23,26 +28,18 @@ class DataProcessingAgent(BaseAgent):
         )
 
     async def _execute(self) -> Dict[str, Any]:
-        """Process and transform data or content as needed"""
+        """Analiza y procesa datos según la especificación del plan."""
         try:
-            # Analyze what type of processing is needed
             processing_plan = await self._analyze_processing_needs()
-            
-            # Get data to process
             input_data = self._get_input_data()
-            
-            # Process data according to plan
             processed_result = await self._process_data(input_data, processing_plan)
-            
-            return {
-                "result": processed_result,
-                "processing_type": processing_plan["type"],
-                "format": processing_plan.get("output_format"),
-                "status": "completed"
-            }
 
+            return {
+                "processed_data": processed_result,
+                "processing_plan": processing_plan
+            }
         except Exception as e:
-            logger.error(f"Error in DataProcessingAgent: {e}")
+            logger.error(f"Error in DataProcessingAgent: {e}", exc_info=True)
             raise
 
     async def _analyze_processing_needs(self) -> Dict[str, Any]:

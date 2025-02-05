@@ -1,4 +1,3 @@
-# agents/analysis_agent.py
 import logging
 from typing import Dict, Any, Optional
 from langchain_openai import ChatOpenAI
@@ -7,8 +6,17 @@ from .base_agent import BaseAgent
 logger = logging.getLogger(__name__)
 
 class AnalysisAgent(BaseAgent):
-    def __init__(self, task: str, openai_api_key: str, metadata: Optional[Dict[str, Any]] = None, partial_data: Optional[Dict[str, Any]] = None):
-        super().__init__(task, openai_api_key, metadata, partial_data)
+    """
+    Agente encargado de realizar análisis sobre datos o información previa.
+    """
+    def __init__(
+        self,
+        task: str,
+        openai_api_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        shared_data: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(task, openai_api_key, metadata, shared_data)
         self.llm = ChatOpenAI(
             api_key=openai_api_key,
             model="gpt-4",
@@ -16,57 +24,56 @@ class AnalysisAgent(BaseAgent):
         )
 
     async def _execute(self) -> Dict[str, Any]:
-        """Execute analysis task"""
+        """Ejecuta el flujo principal de análisis de datos."""
         try:
-            # Get data for analysis
-            data_to_analyze = self._get_analysis_data()
-            
-            # Perform analysis
+            data_to_analyze = self._extract_data_to_analyze()
             analysis_result = await self._analyze_data(data_to_analyze)
             
-            # Determine complexity
-            is_complex = len(data_to_analyze) > 100 if isinstance(data_to_analyze, str) else False
+            # Se considera "complex" si la longitud del string es mayor a 100
+            is_complex = False
+            if isinstance(data_to_analyze, str):
+                is_complex = len(data_to_analyze) > 100
             
             return {
-                "result": analysis_result,
-                "type": "complex" if is_complex else "simple",
-                "data_analyzed": True,
-                "partial_results": self.partial_data
+                "analysis_result": analysis_result,
+                "complexity": "complex" if is_complex else "simple",
+                "data_analyzed": True
             }
 
         except Exception as e:
-            logger.error(f"Error in analysis: {e}")
+            logger.error(f"Error in AnalysisAgent: {e}", exc_info=True)
             raise
 
-    def _get_analysis_data(self) -> Any:
-        """Get data to analyze from task or partial data"""
-        if not self.partial_data:
+    def _extract_data_to_analyze(self) -> Any:
+        """
+        Extrae los datos para analizar desde shared_data o, en su defecto, usa la task.
+        """
+        if not self.shared_data:
             return self.task
 
-        # Check for existing results
-        for k, v in self.partial_data.items():
+        # Se busca en el shared_data algún resultado previo (por ejemplo, en 'research_result')
+        possible_keys = ["result", "response", "content", "research_result"]
+        for v in self.shared_data.values():
             if isinstance(v, dict):
-                if "result" in v:
-                    return v["result"]
-                elif "response" in v:
-                    return v["response"]
-                elif "content" in v:
-                    return v["content"]
-
+                for pk in possible_keys:
+                    if pk in v:
+                        return v[pk]
         return self.task
 
     async def _analyze_data(self, data: Any) -> str:
-        """Analyze the data using LLM"""
+        """Le pide a un LLM que analice los datos y devuelva conclusiones."""
         messages = [
-            {"role": "system", "content": """You are an expert analyst AI. Analyze the provided information 
-            and provide clear, actionable insights. Focus on key points and provide concrete conclusions."""},
-            {"role": "user", "content": f"""Task: {self.task}
-            
-Data to analyze:
-{data}
-
-Provide a thorough analysis."""}
+            {
+                "role": "system",
+                "content": (
+                    "Eres un experto analista de datos. Analiza la información "
+                    "proporcionada de manera clara y con conclusiones concretas."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Task: {self.task}\n\nDatos:\n{data}\n\nProvee un análisis detallado."
+            }
         ]
-
         response = await self.llm.agenerate([messages])
         return response.generations[0][0].message.content

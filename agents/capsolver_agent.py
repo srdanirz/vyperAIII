@@ -1,8 +1,6 @@
-# agents/capsolver_agent.py
 import logging
 import os
 import json
-import asyncio
 from typing import Dict, Any
 from dotenv import load_dotenv
 from capsolver import Capsolver
@@ -13,57 +11,51 @@ load_dotenv()
 
 class CapsolverAgent(BaseAgent):
     """
-    Agent for handling CAPTCHA solving tasks
+    Agente para resolver CAPTCHAs usando el servicio de Capsolver.
     """
-    def __init__(self, task: str, openai_api_key: str, partial_data: dict = None, metadata: dict = None):
-        super().__init__(task, metadata)
-        self.openai_api_key = openai_api_key
-        self.partial_data = partial_data or {}
+    def __init__(self, task: str, openai_api_key: str, shared_data: Dict[str, Any] = None, metadata: dict = None):
+        super().__init__(task, openai_api_key, metadata, shared_data)
         self.capsolver_key = os.getenv("CAPSOLVER_API_KEY")
 
-    async def execute(self) -> Dict[str, Any]:
-        """Execute CAPTCHA solving task"""
+    async def _execute(self) -> Dict[str, Any]:
+        """Ejecuta la resolución de CAPTCHA."""
         if not self.capsolver_key:
             return {
                 "error": "Missing CAPSOLVER_API_KEY environment variable",
                 "metadata": self.metadata
             }
-
         try:
-            captcha_config = self._parse_task()
-            if "error" in captcha_config:
-                captcha_config["metadata"] = self.metadata
-                return captcha_config
-
-            solution = await self._solve_captcha(captcha_config)
+            config = self._parse_task()
+            if "error" in config:
+                config["metadata"] = self.metadata
+                return config
+            solution = await self._solve_captcha(config)
             solution["metadata"] = self.metadata
             return solution
 
         except Exception as e:
-            logger.error(f"Error in CapsolverAgent: {e}")
+            logger.error(f"Error in CapsolverAgent: {e}", exc_info=True)
             return {
                 "error": str(e),
                 "metadata": self.metadata
             }
 
     def _parse_task(self) -> Dict[str, Any]:
-        """Parse the task configuration"""
+        """Parsea la configuración de CAPTCHA desde la task."""
         try:
-            config = json.loads(self.task)
-            if "type" not in config:
+            cfg = json.loads(self.task)
+            if "type" not in cfg:
                 return {"error": "Missing 'type' in CAPTCHA configuration"}
-            return config
+            return cfg
         except json.JSONDecodeError:
             return {"error": "Invalid JSON in task configuration"}
 
     async def _solve_captcha(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Solve the CAPTCHA using Capsolver"""
+        """Resuelve el CAPTCHA usando Capsolver."""
         client = Capsolver(api_key=self.capsolver_key)
-        
         try:
-            task = self._prepare_task(config)
-            result = client.solve(task)
-            
+            task_obj = self._prepare_task(config)
+            result = client.solve(task_obj)
             return {
                 "status": "success",
                 "solution": result.get("solution", {}),
@@ -79,17 +71,14 @@ class CapsolverAgent(BaseAgent):
             }
 
     def _prepare_task(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Prepare the task for Capsolver"""
+        """Prepara el objeto de task para Capsolver."""
         task = {
             "type": config["type"],
             "websiteURL": config.get("websiteURL", ""),
             "websiteKey": config.get("websiteKey", "")
         }
-
-        # Add optional parameters if present
         optional_params = ["proxy", "userAgent", "cookies", "imageBase64", "minScore"]
         for param in optional_params:
             if param in config:
                 task[param] = config[param]
-
         return task

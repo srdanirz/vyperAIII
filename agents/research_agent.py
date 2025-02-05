@@ -1,4 +1,3 @@
-# agents/research_agent.py
 import logging
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
@@ -8,46 +7,43 @@ logger = logging.getLogger(__name__)
 
 class ResearchAgent(BaseAgent):
     """
-    Agent specialized in deep research and information synthesis from multiple sources
+    Agente especializado en investigación y síntesis de información
+    de múltiples fuentes.
     """
-    def __init__(self, task: str, openai_api_key: str, partial_data: Dict[str, Any] = None, metadata: dict = None):
-        super().__init__(task, metadata)
-        self.openai_api_key = openai_api_key
-        self.partial_data = partial_data or {}
+    def __init__(
+        self,
+        task: str,
+        openai_api_key: str,
+        shared_data: Dict[str, Any] = None,
+        metadata: Dict[str, Any] = None
+    ):
+        super().__init__(task, openai_api_key, metadata, shared_data)
         self.llm = ChatOpenAI(
             api_key=openai_api_key,
-            model="gpt-4-turbo",  # Using GPT-4 for better research capabilities
+            model="gpt-4-turbo",
             temperature=0.3
         )
 
-    async def execute(self) -> Dict[str, Any]:
+    async def _execute(self) -> Dict[str, Any]:
+        """Realiza la investigación y genera un resultado en 'research_findings'."""
         try:
-            # Analyze existing data from other agents
             context = self._prepare_research_context()
-            
             messages = [
-                {"role": "system", "content": "You are a research specialist focused on synthesizing information and identifying gaps in knowledge."},
+                {"role": "system", "content": "Eres un especialista en investigación de temas diversos."},
                 {"role": "user", "content": f"Task: {self.task}\nContext: {context}"}
             ]
-            
             response = await self.llm.agenerate([messages])
             return {
-                "research_findings": response.generations[0][0].message.content,
-                "metadata": self.metadata
+                "research_findings": response.generations[0][0].message.content
             }
-            
         except Exception as e:
-            return {
-                "error": f"Research error: {str(e)}",
-                "metadata": self.metadata
-            }
+            logger.error(f"Error in ResearchAgent: {e}", exc_info=True)
+            return {"error": str(e)}
 
     def _prepare_research_context(self) -> str:
-        """
-        Prepare research context from partial data
-        """
-        context_parts = []
-        for key, data in self.partial_data.items():
+        """Prepara contexto con resultados previos en shared_data."""
+        parts = []
+        for key, data in self.shared_data.items():
             if isinstance(data, dict) and "error" not in data:
-                context_parts.append(f"{key}: {str(data)}")
-        return "\n".join(context_parts)
+                parts.append(f"{key}: {str(data)}")
+        return "\n".join(parts)

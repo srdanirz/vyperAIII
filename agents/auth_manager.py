@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 class AuthenticationManager:
     """
-    Manages authentication and session handling for multiple services
+    Maneja la autenticación y el manejo de sesiones para múltiples servicios.
+    Encripta credenciales y renueva tokens cuando es necesario.
     """
     def __init__(self, encryption_key: Optional[str] = None):
         self.encryption_key = encryption_key or Fernet.generate_key()
@@ -24,12 +25,15 @@ class AuthenticationManager:
         self.session_validators: Dict[str, Callable[[Dict[str, Any]], Coroutine[Any, Any, bool]]] = {}
 
     async def initialize(self, service_configs: Dict[str, Any]) -> None:
-        """Initialize with service configurations"""
+        """Inicializa con configuraciones específicas de cada servicio."""
         self.service_configs = service_configs
         asyncio.create_task(self._monitor_sessions())
 
     async def get_session(self, service: str, credentials: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Get an active session for a service"""
+        """
+        Retorna una sesión activa para un servicio. Si no existe o expiró,
+        la renueva o la crea.
+        """
         try:
             if service in self.sessions and await self._is_session_valid(service):
                 return self.sessions[service]
@@ -47,7 +51,7 @@ class AuthenticationManager:
                 raise ValueError(f"No credentials available for {service}")
 
         except Exception as e:
-            logger.error(f"Error getting session for {service}: {e}")
+            logger.error(f"Error getting session for {service}: {e}", exc_info=True)
             raise
 
     async def store_credentials(self, service: str, credentials: Dict[str, Any]) -> None:

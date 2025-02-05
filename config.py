@@ -2,18 +2,15 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 
-# Base paths
 BASE_DIR = Path(__file__).parent
 CACHE_DIR = BASE_DIR / "cache"
 TEMPLATES_DIR = BASE_DIR / "templates"
 LOGS_DIR = BASE_DIR / "logs"
 
-# Create necessary directories
 CACHE_DIR.mkdir(exist_ok=True)
 TEMPLATES_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 
-# API configurations
 API_CONFIG = {
     "openai": {
         "model": "gpt-4-turbo",
@@ -24,20 +21,18 @@ API_CONFIG = {
         "presence_penalty": 0.0
     },
     "timeout": {
-        "default": 300,  # 5 minutes
-        "long": 900,     # 15 minutes
-        "short": 60      # 1 minute
+        "default": 300,
+        "long": 900,
+        "short": 60
     }
 }
 
-# Cache settings
 CACHE_CONFIG = {
     "expiration_hours": 24,
     "max_size_mb": 1000,
-    "cleanup_interval": 3600  # 1 hour
+    "cleanup_interval": 3600
 }
 
-# Agent settings
 AGENT_CONFIG = {
     "retry": {
         "max_attempts": 3,
@@ -53,7 +48,6 @@ AGENT_CONFIG = {
     }
 }
 
-# Service endpoints
 SERVICE_ENDPOINTS = {
     "google": {
         "docs": "https://docs.googleapis.com/v1",
@@ -66,17 +60,12 @@ SERVICE_ENDPOINTS = {
     }
 }
 
-# Logging configuration
 LOG_CONFIG = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "standard": {
-            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-        },
-        "detailed": {
-            "format": "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d: %(message)s"
-        }
+        "standard": {"format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"},
+        "detailed": {"format": "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d: %(message)s"}
     },
     "handlers": {
         "console": {
@@ -100,7 +89,6 @@ LOG_CONFIG = {
     }
 }
 
-# Template configurations
 TEMPLATE_CONFIG = {
     "presentation": {
         "slide_layouts": {
@@ -127,16 +115,10 @@ TEMPLATE_CONFIG = {
             "heading2": {"size": 14, "bold": True},
             "normal": {"size": 11, "bold": False}
         },
-        "margins": {
-            "top": 1.0,
-            "bottom": 1.0,
-            "left": 1.0,
-            "right": 1.0
-        }
+        "margins": {"top": 1.0, "bottom": 1.0, "left": 1.0, "right": 1.0}
     }
 }
 
-# Performance monitoring
 PERFORMANCE_CONFIG = {
     "metrics": {
         "execution_time": True,
@@ -144,18 +126,16 @@ PERFORMANCE_CONFIG = {
         "api_calls": True
     },
     "thresholds": {
-        "execution_time": 300,  # 5 minutes
-        "memory_usage": 1024,   # 1GB
-        "api_calls": 100        # per hour
+        "execution_time": 300,
+        "memory_usage": 1024,
+        "api_calls": 100
     }
 }
 
 def get_env_var(name: str, default: Any = None) -> Any:
-    """Get environment variable with default"""
     return os.getenv(name, default)
 
 def get_config() -> Dict[str, Any]:
-    """Get complete configuration"""
     return {
         "api": API_CONFIG,
         "cache": CACHE_CONFIG,
@@ -167,7 +147,6 @@ def get_config() -> Dict[str, Any]:
     }
 
 def update_config(section: str, updates: Dict[str, Any]) -> None:
-    """Update configuration section"""
     config = globals().get(f"{section.upper()}_CONFIG")
     if config:
         config.update(updates)

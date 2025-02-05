@@ -1,23 +1,30 @@
-# agents/db_agent.py
 import logging
-from typing import Dict, Any, Optional, List
-from .base_agent import BaseAgent
+from typing import Dict, Any, Optional, Tuple
 import sqlite3
 import psycopg2
-import json
+from .base_agent import BaseAgent
+
+logger = logging.getLogger(__name__)
 
 class DBAgent(BaseAgent):
-    def __init__(self, task: str, openai_api_key: str, metadata: Optional[Dict[str, Any]] = None, partial_data: Optional[Dict[str, Any]] = None):
-        super().__init__(task, openai_api_key, metadata, partial_data)
+    """
+    Agente para realizar operaciones en bases de datos (SQLite, Postgres).
+    """
+    def __init__(
+        self,
+        task: str,
+        openai_api_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        shared_data: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(task, openai_api_key, metadata, shared_data)
         self.connections = {}
         self.current_db = None
 
     async def _execute(self) -> Dict[str, Any]:
-        """Ejecuta operaciones de base de datos"""
+        """Ejecuta la operación determinada: SELECT, INSERT, UPDATE, DELETE, etc."""
         try:
-            # Analizar la operación requerida
             operation_type = self._determine_operation()
-            
             if operation_type == "query":
                 return await self._execute_query()
             elif operation_type == "insert":
@@ -31,9 +38,8 @@ class DBAgent(BaseAgent):
                     "error": f"Unsupported operation: {operation_type}",
                     "supported_operations": ["query", "insert", "update", "delete"]
                 }
-
         except Exception as e:
-            logging.error(f"Error in DBAgent: {e}")
+            logger.error(f"Error in DBAgent: {e}", exc_info=True)
             raise
 
     def _determine_operation(self) -> str:
