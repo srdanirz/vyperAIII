@@ -1,0 +1,17 @@
+2025-01-29 01:39:15,906 - INFO     [orchestrator] Generando nuevo plan para el prompt:
+¿Qué día es hoy?
+2025-01-29 01:39:16,940 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 01:39:21,024 - INFO     [agents.browser_agent] Navegador lanzado exitosamente.
+2025-01-29 01:39:21,026 - INFO     [agent_manager] === Ejecutando grupo 'default' en paralelo ===
+2025-01-29 01:39:21,027 - ERROR    [agents.simple_query_agent] Error en SimpleQueryAgent: 
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+
+2025-01-29 01:39:21,365 - INFO     [agents.browser_agent] Navegador cerrado.
+2025-01-29 01:39:21,377 - INFO     [agents.browser_agent] Playwright detenido.

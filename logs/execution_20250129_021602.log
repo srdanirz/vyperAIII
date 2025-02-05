@@ -1,0 +1,34 @@
+2025-01-29 02:16:02,182 - INFO     [proxy_manager] Se cargaron 39200 proxies desde 'proxies.txt'.
+2025-01-29 02:16:02,204 - INFO     [orchestrator] Generating complex plan for prompt:
+Investiga el mercado de coches eléctricos en España, compara precios y características de los 3 modelos más vendidos, y prepara un informe detallado
+2025-01-29 02:16:04,233 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 02:16:04,275 - ERROR    [orchestrator] Invalid plan generated: Group 'phase1' depends on itself
+2025-01-29 02:16:08,116 - INFO     [agents.browser_agent] Browser launched successfully
+2025-01-29 02:16:08,119 - INFO     [agent_manager] Browser initialized successfully
+2025-01-29 02:16:08,141 - INFO     [agent_manager] === Executing group 'phase4' in parallel ===
+2025-01-29 02:16:08,180 - INFO     [agent_manager] === Executing group 'phase3' in parallel ===
+2025-01-29 02:16:08,216 - INFO     [agent_manager] === Executing group 'phase2' in parallel ===
+2025-01-29 02:16:08,230 - INFO     [agent_manager] === Executing group 'phase1' in parallel ===
+2025-01-29 02:16:08,284 - INFO     [agents.browser_agent] New browser context created
+2025-01-29 02:16:08,302 - INFO     [agents.browser_agent] Browser context created
+2025-01-29 02:16:14,245 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 02:16:15,329 - ERROR    [agents.browser_agent] Error in search step: Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.google.com/search?q=relevant%20web%20sources%20for%20information%20gathering
+Call log:
+  - navigating to "https://www.google.com/search?q=relevant%20web%20sources%20for%20information%20gathering", waiting until "load"
+
+2025-01-29 02:16:19,120 - ERROR    [agents.browser_agent] Error in search step: Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.google.com/search?q=best%20websites%20for%20information%20gathering
+Call log:
+  - navigating to "https://www.google.com/search?q=best%20websites%20for%20information%20gathering", waiting until "load"
+
+2025-01-29 02:16:49,227 - ERROR    [agents.browser_agent] Error in search step: Page.goto: Timeout 30000ms exceeded.
+Call log:
+  - navigating to "https://www.britannica.com/", waiting until "networkidle"
+
+2025-01-29 02:16:49,455 - ERROR    [agents.browser_agent] Error in search step: Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.google.com/search?q=online%20databases%20for%20information%20gathering
+Call log:
+  - navigating to "https://www.google.com/search?q=online%20databases%20for%20information%20gathering", waiting until "load"
+
+2025-01-29 02:17:04,449 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 02:17:04,523 - INFO     [agents.browser_agent] Browser closed
+2025-01-29 02:17:04,533 - INFO     [agents.browser_agent] Playwright stopped
+2025-01-29 02:17:04,533 - INFO     [agent_manager] Browser closed successfully

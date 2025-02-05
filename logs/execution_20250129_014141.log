@@ -1,0 +1,8 @@
+2025-01-29 01:41:41,399 - INFO     [orchestrator] Generando nuevo plan para el prompt:
+¿Qué día es hoy?
+2025-01-29 01:41:42,216 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 01:41:44,054 - INFO     [agents.browser_agent] Navegador lanzado exitosamente.
+2025-01-29 01:41:44,056 - INFO     [agent_manager] === Ejecutando grupo 'default' en paralelo ===
+2025-01-29 01:41:44,085 - ERROR    [agents.simple_query_agent] Error en SimpleQueryAgent: 'AsyncOpenAI' object has no attribute 'chat_completions'
+2025-01-29 01:41:44,288 - INFO     [agents.browser_agent] Navegador cerrado.
+2025-01-29 01:41:44,298 - INFO     [agents.browser_agent] Playwright detenido.

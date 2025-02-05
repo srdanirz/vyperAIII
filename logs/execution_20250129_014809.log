@@ -1,0 +1,11 @@
+2025-01-29 01:48:09,359 - INFO     [orchestrator] Generando nuevo plan para el prompt:
+Investiga el mercado de coches eléctricos en España, compara precios y características de los 3 modelos más vendidos, y prepara un informe detallado
+2025-01-29 01:48:14,396 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 01:48:14,989 - INFO     [agents.browser_agent] Navegador lanzado exitosamente.
+2025-01-29 01:48:15,003 - INFO     [agent_manager] === Ejecutando grupo 'phase1' en paralelo ===
+2025-01-29 01:48:15,004 - INFO     [agent_manager] === Ejecutando grupo 'phase2' en paralelo ===
+2025-01-29 01:48:15,029 - INFO     [agent_manager] === Ejecutando grupo 'phase3' en paralelo ===
+2025-01-29 01:48:15,066 - INFO     [agent_manager] === Ejecutando grupo 'phase4' en paralelo ===
+2025-01-29 01:48:15,069 - INFO     [agent_manager] === Ejecutando grupo 'default' en paralelo ===
+2025-01-29 01:48:15,225 - INFO     [agents.browser_agent] Navegador cerrado.
+2025-01-29 01:48:15,232 - INFO     [agents.browser_agent] Playwright detenido.

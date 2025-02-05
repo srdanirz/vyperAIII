@@ -1,0 +1,2 @@
+2025-01-29 02:09:01,565 - INFO     [proxy_manager] Se cargaron 39200 proxies desde 'proxies.txt'.
+2025-01-29 02:09:01,574 - INFO     [agent_manager] === Executing group 'direct' in parallel ===

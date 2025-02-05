@@ -1,0 +1,15 @@
+2025-01-29 01:50:19,803 - INFO     [orchestrator] Generando nuevo plan para el prompt:
+Investiga el mercado de coches eléctricos en España, compara precios y características de los 3 modelos más vendidos, y prepara un informe detallado
+2025-01-29 01:50:23,013 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 01:50:23,030 - INFO     [agent_manager] === Executing group 'phase1' in parallel ===
+2025-01-29 01:50:23,052 - ERROR    [agent_manager] Error executing agent browser_use: BrowserAgent.__init__() missing 1 required positional argument: 'browser'
+2025-01-29 01:50:40,490 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 01:50:40,494 - INFO     [agent_manager] === Executing group 'phase2' in parallel ===
+2025-01-29 01:50:40,494 - ERROR    [agents.data_processing_agent] No hay información disponible para procesar.
+2025-01-29 01:50:40,494 - INFO     [agent_manager] === Executing group 'phase3' in parallel ===
+2025-01-29 01:50:43,153 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 01:50:43,155 - INFO     [agent_manager] === Executing group 'phase4' in parallel ===
+2025-01-29 01:50:43,156 - ERROR    [agents.notification_agent] No hay información de PDF disponible para notificar.
+2025-01-29 01:50:43,156 - INFO     [agent_manager] === Executing group 'default' in parallel ===
+2025-01-29 01:50:57,181 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 01:51:15,917 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"

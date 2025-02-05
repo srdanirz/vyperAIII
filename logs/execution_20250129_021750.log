@@ -1,0 +1,16 @@
+2025-01-29 02:17:50,124 - INFO     [proxy_manager] Se cargaron 39200 proxies desde 'proxies.txt'.
+2025-01-29 02:17:50,139 - INFO     [orchestrator] Generating complex plan for prompt:
+Quien es Leonardo DiCaprio
+2025-01-29 02:17:50,813 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 02:17:50,833 - ERROR    [orchestrator] Invalid plan generated: Missing required fields in plan step
+2025-01-29 02:17:51,614 - INFO     [agents.browser_agent] Browser launched successfully
+2025-01-29 02:17:51,632 - INFO     [agent_manager] Browser initialized successfully
+2025-01-29 02:17:51,632 - INFO     [agent_manager] === Executing group 'phase4' in parallel ===
+2025-01-29 02:17:51,682 - INFO     [agent_manager] === Executing group 'phase3' in parallel ===
+2025-01-29 02:17:51,710 - INFO     [agent_manager] === Executing group 'phase2' in parallel ===
+2025-01-29 02:17:51,711 - INFO     [agent_manager] === Executing group 'phase1' in parallel ===
+2025-01-29 02:17:51,747 - INFO     [agents.browser_agent] New browser context created
+2025-01-29 02:17:51,751 - INFO     [agents.browser_agent] Browser context created
+2025-01-29 02:17:56,161 - ERROR    [agents.browser_agent] Error in search step: BrowserContext.new_page: Target page, context or browser has been closed
+2025-01-29 02:17:56,178 - ERROR    [agents.browser_agent] Error in BrowserAgent: BrowserContext.close: Target page, context or browser has been closed
+2025-01-29 02:17:56,186 - ERROR    [__main__] Error in orchestration: Browser.close: Connection closed while reading from the driver

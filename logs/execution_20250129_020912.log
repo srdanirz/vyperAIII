@@ -1,0 +1,7 @@
+2025-01-29 02:09:12,239 - INFO     [proxy_manager] Se cargaron 39200 proxies desde 'proxies.txt'.
+2025-01-29 02:09:12,250 - INFO     [orchestrator] Generating complex plan for prompt:
+Investiga el mercado de coches eléctricos en España, compara precios y características de los 3 modelos más vendidos, y prepara un informe detallado
+2025-01-29 02:09:14,288 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 02:09:14,312 - ERROR    [orchestrator] Invalid plan generated: Group 'phase1' depends on itself
+2025-01-29 02:09:14,313 - INFO     [agent_manager] === Executing group 'fallback' in parallel ===
+2025-01-29 02:09:14,798 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"

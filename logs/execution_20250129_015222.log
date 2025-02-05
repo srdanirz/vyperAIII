@@ -1,0 +1,5 @@
+2025-01-29 01:52:22,483 - INFO     [orchestrator] Generando nuevo plan para el prompt:
+Investiga el mercado de coches eléctricos en España, compara precios y características de los 3 modelos más vendidos, y prepara un informe detallado
+2025-01-29 01:52:25,243 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 01:52:25,263 - INFO     [agent_manager] === Executing group 'phase1' in parallel ===
+2025-01-29 01:52:25,280 - ERROR    [agent_manager] Error executing agent browser_use: BrowserAgent.__init__() missing 1 required positional argument: 'browser'

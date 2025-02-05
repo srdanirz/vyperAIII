@@ -1,0 +1,9 @@
+2025-01-29 01:59:28,612 - INFO     [proxy_manager] Se cargaron 39200 proxies desde 'proxies.txt'.
+2025-01-29 01:59:28,643 - INFO     [orchestrator] Generating new plan for prompt:
+¿Qué día es hoy?
+2025-01-29 01:59:30,118 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 01:59:30,139 - ERROR    [orchestrator] Invalid plan generated: Group 'phase1' depends on itself
+2025-01-29 01:59:30,139 - INFO     [agent_manager] === Executing group 'fallback_phase2' in parallel ===
+2025-01-29 01:59:30,139 - INFO     [agent_manager] === Executing group 'fallback_phase1' in parallel ===
+2025-01-29 01:59:40,189 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-01-29 01:59:53,589 - INFO     [httpx] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
