@@ -1,0 +1,33 @@
+{
+    "version": "1.0.0",
+    "api": {
+        "openai": {
+            "model": "gpt-4-turbo",
+            "temperature": 0.7,
+            "max_tokens": 4000
+        },
+        "deepseek": {
+            "model": "deepseek-chat",
+            "temperature": 0.7,
+            "max_tokens": 4000
+        }
+    },
+    "agent_roles": {
+        "research": {
+            "title": "Research Director",
+            "skills": ["investigation", "data_collection"]
+        },
+        "analysis": {
+            "title": "Analysis Director",
+            "skills": ["data_analysis", "pattern_recognition"]
+        },
+        "contentgeneration": {
+            "title": "Content Director",
+            "skills": ["content_creation", "formatting"]
+        },
+        "validation": {
+            "title": "Quality Assurance Director",
+            "skills": ["quality_control", "validation"]
+        }
+    }
+}

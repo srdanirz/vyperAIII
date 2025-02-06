@@ -1,0 +1,109 @@
+# plugins/plugin_config.yaml
+
+# Configuración global de plugins
+global:
+  environment: production
+  log_level: INFO
+  auto_reload: true
+  metrics_enabled: true
+
+# Configuración de plugins individuales
+plugins:
+  vision_plugin:
+    enabled: true
+    models:
+      object_detection: "facebook/detr-resnet-50"
+      face_analysis: "deepface/large"
+      ocr: "tesseract/latest"
+    cache:
+      enabled: true
+      max_size: 1000
+      ttl: 3600
+
+  audio_plugin:
+    enabled: true
+    models:
+      speech_recognition: "facebook/wav2vec2-large-960h"
+      emotion_detection: "superb/wav2vec2-base-superb-er"
+    processing:
+      sample_rate: 16000
+      channels: 1
+      duration_limit: 300
+
+  mlops_plugin:
+    enabled: true
+    optimization:
+      strategy: "bayesian"
+      trials: 20
+      metrics:
+        - accuracy
+        - latency
+        - resource_usage
+    monitoring:
+      interval: 60
+      alert_threshold: 0.95
+
+  security_plugin:
+    enabled: true
+    rules:
+      max_requests: 100
+      rate_limit: "60/minute"
+      allowed_ips: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+    encryption:
+      algorithm: "AES-256"
+      key_rotation: 86400
+
+# Dependencias entre plugins
+dependencies:
+  mlops_plugin:
+    - vision_plugin
+    - audio_plugin
+  security_plugin:
+    - mlops_plugin
+
+# Hooks disponibles y sus configuraciones
+hooks:
+  pre_process:
+    timeout: 5
+    retry: 3
+  post_process:
+    timeout: 10
+    retry: 2
+  error_handler:
+    timeout: 3
+    retry: 1
+
+# Configuración de recursos
+resources:
+  cpu:
+    limit: 4
+    request: 2
+  memory:
+    limit: "8Gi"
+    request: "4Gi"
+  gpu:
+    enabled: true
+    type: "nvidia-tesla-t4"
+
+# Configuración de almacenamiento
+storage:
+  type: "distributed"
+  backends:
+    - s3:
+        bucket: "vyper-ai-storage"
+        region: "eu-west-1"
+    - local:
+        path: "/data/vyper-ai"
+        max_size: "100Gi"
+
+# Configuración de monitoreo
+monitoring:
+  prometheus:
+    enabled: true
+    port: 9090
+  grafana:
+    enabled: true
+    port: 3000
+  alerts:
+    slack_webhook: "https://hooks.slack.com/services/xxx"
+    email: "alerts@vyper-ai.com"
