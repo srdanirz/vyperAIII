@@ -1,5 +1,3 @@
-# core_orchestrator.py
-
 import logging
 import asyncio
 from typing import Dict, Any, List, Optional, Union
@@ -7,309 +5,384 @@ from datetime import datetime
 from pathlib import Path
 import json
 
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import Chroma
-from langchain.memory import ConversationBufferMemory
-
-# Nuevos imports
-from edge.edge_manager import EdgeManager
-from plugins.plugin_manager import PluginManager
-from optimization.rl_optimizer import RLOptimizer
-from optimization.prompt_adapter import PromptAdapter
+from dynamic_team_manager import DynamicTeamManager, TeamRole
+from agents.agent_communication import AgentCommunicationSystem
+from monitoring.monitoring_manager import MonitoringManager
+from optimization.auto_finetuning import AutoFineTuner
 from audit.blockchain_manager import BlockchainManager
 from audit.decision_explainer import DecisionExplainer
-
-# Agentes especializados
-from agents.vision_agent import VisionAgent
-from agents.audio_agent import AudioAgent
-from agents.mlops_agent import MLOpsAgent
-from agents.security_agent import SecurityAgent
+from edge.edge_manager import EdgeManager
+from plugins.plugin_manager import PluginManager
 
 logger = logging.getLogger(__name__)
 
 class CoreOrchestrator:
     """
-    Orquestador central del sistema con soporte para múltiples modelos y capacidades avanzadas.
+    Orquestador central mejorado con soporte para equipos dinámicos.
+    
+    Coordina:
+    - Gestión de equipos dinámicos
+    - Procesamiento distribuido
+    - Optimización y monitoreo
+    - Auditoría y seguridad
     """
     
     def __init__(
         self,
         api_key: str,
         engine_mode: str = "openai",
-        edge_enabled: bool = True,
-        blockchain_enabled: bool = True
+        config_path: Optional[str] = None,
+        enable_edge: bool = True,
+        enable_blockchain: bool = True
     ):
         self.api_key = api_key
         self.engine_mode = engine_mode
         
-        # Inicializar componentes principales
-        self.edge_manager = EdgeManager() if edge_enabled else None
+        # Cargar configuración
+        self.config = self._load_config(config_path)
+        
+        # Inicializar componentes core
+        self.team_manager = DynamicTeamManager(api_key, engine_mode)
+        self.edge_manager = EdgeManager() if enable_edge else None
+        self.comm_system = AgentCommunicationSystem(api_key, engine_mode)
+        
+        # Sistemas de soporte
+        self.monitoring = MonitoringManager()
+        self.optimizer = AutoFineTuner(api_key, engine_mode)
+        self.blockchain = BlockchainManager() if enable_blockchain else None
+        self.decision_explainer = DecisionExplainer(api_key, engine_mode)
         self.plugin_manager = PluginManager()
-        self.rl_optimizer = RLOptimizer(engine_mode)
-        self.prompt_adapter = PromptAdapter(engine_mode)
-        self.blockchain_manager = BlockchainManager() if blockchain_enabled else None
-        self.decision_explainer = DecisionExplainer()
-        
-        # Configurar sistema de memoria y embeddings
-        self._setup_memory_system()
-        
-        # Inicializar agentes especializados
-        self.specialized_agents = {
-            "vision": VisionAgent(api_key, engine_mode),
-            "audio": AudioAgent(api_key, engine_mode),
-            "mlops": MLOpsAgent(api_key, engine_mode),
-            "security": SecurityAgent(api_key, engine_mode)
-        }
         
         # Estado del sistema
         self.system_state = {
-            "active_tasks": {},
+            "status": "initializing",
+            "active_teams": {},
+            "pending_tasks": [],
             "resource_usage": {},
-            "performance_metrics": {},
-            "security_status": {}
+            "performance_metrics": {}
         }
+        
+        # Iniciar monitores
+        self._start_monitoring()
 
     async def process_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Procesa una solicitud completa con el nuevo sistema mejorado.
-        """
-        try:
-            # 1. Validación de seguridad inicial
-            security_check = await self.specialized_agents["security"].validate_request(request)
-            if not security_check["is_safe"]:
-                return {"error": "Security validation failed", "details": security_check}
-
-            # 2. Análisis y optimización de la tarea
-            task_analysis = await self._analyze_task(request)
-            optimized_prompt = await self.prompt_adapter.optimize(task_analysis)
-            
-            # 3. Determinar si usar edge computing
-            if self.edge_manager and self._should_use_edge(task_analysis):
-                return await self._process_on_edge(optimized_prompt)
-            
-            # 4. Ejecutar tarea principal
-            result = await self._execute_task(optimized_prompt)
-            
-            # 5. Post-procesamiento y auditoría
-            processed_result = await self._post_process_result(result)
-            await self._audit_execution(request, processed_result)
-            
-            # 6. Actualizar estado y métricas
-            await self._update_system_state(request, processed_result)
-            
-            return processed_result
-            
-        except Exception as e:
-            logger.error(f"Error in process_request: {e}")
-            return {"error": str(e)}
-
-    async def _analyze_task(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Análisis avanzado de la tarea con optimización RL.
-        """
-        # Obtener recomendaciones del optimizador RL
-        rl_suggestions = await self.rl_optimizer.get_suggestions(request)
+        Procesa una solicitud completa usando equipos dinámicos.
         
-        # Combinar con análisis de agentes especializados
-        vision_analysis = await self.specialized_agents["vision"].analyze(request)
-        audio_analysis = await self.specialized_agents["audio"].analyze(request)
-        mlops_analysis = await self.specialized_agents["mlops"].analyze(request)
-        
-        return {
-            "rl_suggestions": rl_suggestions,
-            "specialized_analysis": {
-                "vision": vision_analysis,
-                "audio": audio_analysis,
-                "mlops": mlops_analysis
-            },
-            "timestamp": datetime.now().isoformat()
-        }
-
-    def _should_use_edge(self, task_analysis: Dict[str, Any]) -> bool:
-        """
-        Determina si una tarea debería ejecutarse en edge.
-        """
-        if not self.edge_manager:
-            return False
-            
-        criteria = {
-            "data_size": task_analysis.get("data_size", 0) > 10_000_000,  # 10MB
-            "latency_sensitive": task_analysis.get("latency_requirements", "low") == "high",
-            "privacy_required": task_analysis.get("privacy_level", "low") == "high"
-        }
-        
-        return any(criteria.values())
-
-    async def _process_on_edge(self, optimized_prompt: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Procesa una tarea en edge computing.
+        Args:
+            request: Solicitud con tipo y datos
         """
         try:
-            # Seleccionar edge worker óptimo
-            worker = await self.edge_manager.get_optimal_worker()
+            # 1. Analizar solicitud y determinar equipos necesarios
+            analysis = await self._analyze_request(request)
+            required_teams = await self._determine_required_teams(analysis)
             
-            # Ejecutar en edge
-            result = await worker.execute(optimized_prompt)
+            # 2. Crear o asignar equipos
+            teams = []
+            for team_req in required_teams:
+                team = await self._get_or_create_team(
+                    team_req["name"],
+                    team_req["roles"],
+                    team_req["objectives"]
+                )
+                teams.append(team)
             
-            # Validar resultado
-            if not await self._validate_edge_result(result):
-                raise ValueError("Edge execution validation failed")
-                
-            return result
+            # 3. Distribuir trabajo
+            tasks = await self._distribute_work(teams, request, analysis)
             
-        except Exception as e:
-            logger.error(f"Edge processing error: {e}")
-            # Fallback a procesamiento normal
-            return await self._execute_task(optimized_prompt)
-
-    async def _execute_task(self, optimized_prompt: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Ejecuta una tarea con el motor seleccionado (OpenAI o DeepSeek).
-        """
-        try:
-            # Aplicar plugins pre-ejecución
-            await self.plugin_manager.apply_pre_execution_plugins(optimized_prompt)
+            # 4. Procesar en edge si es necesario
+            if self.edge_manager and self._should_use_edge(analysis):
+                edge_results = await self._process_on_edge(tasks)
+                tasks = self._merge_edge_results(tasks, edge_results)
             
-            # Seleccionar motor y ejecutar
-            if self.engine_mode == "deepseek":
-                from deepseek_chat import DeepSeekChat
-                executor = DeepSeekChat(api_key=self.api_key)
-            else:
-                from langchain_openai import ChatOpenAI
-                executor = ChatOpenAI(api_key=self.api_key)
-                
-            response = await executor.agenerate([optimized_prompt])
+            # 5. Ejecutar y coordinar
+            results = await self._execute_coordinated_tasks(teams, tasks)
             
-            # Aplicar plugins post-ejecución
-            result = await self.plugin_manager.apply_post_execution_plugins(response)
+            # 6. Post-procesar y optimizar
+            processed_results = await self._post_process_results(results)
             
-            return result
+            # 7. Generar explicaciones
+            explanations = await self.decision_explainer.explain_decisions(
+                request,
+                processed_results,
+                teams
+            )
             
-        except Exception as e:
-            logger.error(f"Task execution error: {e}")
-            raise
-
-    async def _post_process_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Post-procesa el resultado incluyendo explicabilidad.
-        """
-        try:
-            # Generar explicaciones
-            explanations = await self.decision_explainer.explain(result)
+            # 8. Registrar en blockchain
+            if self.blockchain:
+                await self._record_execution(request, processed_results, explanations)
             
-            # Agregar métricas y metadata
-            processed_result = {
-                **result,
+            # 9. Actualizar métricas
+            await self._update_metrics(teams, processed_results)
+            
+            return {
+                "status": "success",
+                "results": processed_results,
                 "explanations": explanations,
-                "metrics": await self._calculate_metrics(result),
+                "teams_involved": [t.id for t in teams],
                 "execution_metadata": {
-                    "engine_mode": self.engine_mode,
                     "timestamp": datetime.now().isoformat(),
-                    "version": "2.0.0"
+                    "engine_mode": self.engine_mode,
+                    "teams_performance": await self._get_teams_performance(teams)
                 }
             }
             
-            return processed_result
-            
         except Exception as e:
-            logger.error(f"Post-processing error: {e}")
-            return result
+            logger.error(f"Error processing request: {e}")
+            return {"error": str(e)}
 
-    async def _audit_execution(
-        self,
-        request: Dict[str, Any],
-        result: Dict[str, Any]
-    ) -> None:
-        """
-        Registra la ejecución en blockchain si está habilitado.
-        """
-        if self.blockchain_manager:
-            await self.blockchain_manager.record_execution({
-                "request_hash": self.blockchain_manager.hash_data(request),
-                "result_hash": self.blockchain_manager.hash_data(result),
-                "timestamp": datetime.now().isoformat(),
-                "engine_mode": self.engine_mode
-            })
-
-    def _setup_memory_system(self) -> None:
-        """
-        Configura el sistema de memoria y embeddings.
-        """
-        self.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True
-        )
-        
-        if self.engine_mode == "openai":
-            self.embeddings = OpenAIEmbeddings(openai_api_key=self.api_key)
-        else:
-            # Usar embeddings de DeepSeek
-            from deepseek_chat import DeepSeekEmbeddings
-            self.embeddings = DeepSeekEmbeddings(api_key=self.api_key)
-            
-        self.vector_store = Chroma(
-            collection_name="system_memory",
-            embedding_function=self.embeddings
-        )
-
-    async def _update_system_state(
-        self,
-        request: Dict[str, Any],
-        result: Dict[str, Any]
-    ) -> None:
-        """
-        Actualiza el estado del sistema y métricas.
-        """
+    async def _analyze_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Analiza una solicitud para determinar necesidades."""
         try:
-            # Actualizar métricas de MLOps
-            mlops_metrics = await self.specialized_agents["mlops"].update_metrics(
-                request, result
+            # Determinar tipo de solicitud
+            request_type = self._determine_request_type(request)
+            
+            # Analizar complejidad y requisitos
+            complexity_analysis = await self._analyze_complexity(request)
+            requirements = await self._extract_requirements(request)
+            
+            # Determinar capacidades necesarias
+            capabilities = await self._determine_required_capabilities(
+                request_type,
+                complexity_analysis
             )
             
-            # Actualizar estado del sistema
-            self.system_state.update({
-                "last_update": datetime.now().isoformat(),
-                "mlops_metrics": mlops_metrics,
-                "active_tasks_count": len(self.system_state["active_tasks"]),
-                "performance_metrics": await self._calculate_metrics(result)
-            })
+            # Analizar dependencias
+            dependencies = await self._analyze_dependencies(requirements)
+            
+            return {
+                "request_type": request_type,
+                "complexity": complexity_analysis,
+                "requirements": requirements,
+                "capabilities": capabilities,
+                "dependencies": dependencies,
+                "timestamp": datetime.now().isoformat()
+            }
             
         except Exception as e:
-            logger.error(f"Error updating system state: {e}")
+            logger.error(f"Error analyzing request: {e}")
+            raise
 
-    async def _calculate_metrics(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Calcula métricas detalladas del sistema.
-        """
-        return {
-            "response_time": result.get("execution_time", 0),
-            "token_usage": result.get("token_usage", {}),
-            "model_performance": await self.rl_optimizer.get_performance_metrics(),
-            "edge_metrics": await self.edge_manager.get_metrics() if self.edge_manager else {},
-            "resource_usage": self.system_state["resource_usage"]
-        }
+    async def _determine_required_teams(
+        self,
+        analysis: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Determina los equipos necesarios basado en el análisis."""
+        try:
+            required_teams = []
+            
+            # Equipo principal basado en tipo de solicitud
+            main_team = {
+                "name": f"Team_{analysis['request_type']}",
+                "roles": self._get_roles_for_type(analysis['request_type']),
+                "objectives": [
+                    f"Handle {analysis['request_type']} request",
+                    "Ensure quality and efficiency",
+                    "Collaborate with support teams"
+                ]
+            }
+            required_teams.append(main_team)
+            
+            # Equipos de soporte basados en complejidad
+            if analysis['complexity']['level'] > 0.7:
+                support_team = {
+                    "name": "Support_Team",
+                    "roles": self._get_support_roles(analysis),
+                    "objectives": ["Provide specialized support", "Handle complex aspects"]
+                }
+                required_teams.append(support_team)
+            
+            # Equipos especializados basados en capacidades
+            for capability in analysis['capabilities']:
+                if self._needs_specialized_team(capability):
+                    specialized_team = {
+                        "name": f"Specialized_{capability}",
+                        "roles": self._get_specialized_roles(capability),
+                        "objectives": [f"Handle {capability} aspects"]
+                    }
+                    required_teams.append(specialized_team)
+            
+            return required_teams
+            
+        except Exception as e:
+            logger.error(f"Error determining required teams: {e}")
+            raise
+
+    async def _get_or_create_team(
+        self,
+        name: str,
+        roles: List[TeamRole],
+        objectives: List[str]
+    ) -> Any:
+        """Obtiene un equipo existente o crea uno nuevo."""
+        try:
+            # Buscar equipo existente adecuado
+            existing_team = await self.team_manager.find_suitable_team(
+                roles,
+                objectives
+            )
+            
+            if existing_team:
+                # Verificar disponibilidad
+                if await self.team_manager.is_team_available(existing_team.id):
+                    return existing_team
+            
+            # Crear nuevo equipo
+            return await self.team_manager.create_team(
+                name=name,
+                roles=roles,
+                objectives=objectives,
+                metadata={
+                    "created_at": datetime.now().isoformat(),
+                    "creator": "CoreOrchestrator"
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Error getting/creating team: {e}")
+            raise
+
+    async def _distribute_work(
+        self,
+        teams: List[Any],
+        request: Dict[str, Any],
+        analysis: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Distribuye el trabajo entre los equipos."""
+        try:
+            tasks = []
+            
+            # Crear plan de distribución
+            distribution_plan = await self._create_distribution_plan(
+                teams,
+                analysis
+            )
+            
+            # Asignar tareas según el plan
+            for team in teams:
+                team_tasks = await self.team_manager.assign_task(
+                    team.id,
+                    {
+                        "type": "request_processing",
+                        "data": request,
+                        "analysis": analysis,
+                        "plan": distribution_plan[team.id]
+                    }
+                )
+                tasks.extend(team_tasks)
+            
+            return tasks
+            
+        except Exception as e:
+            logger.error(f"Error distributing work: {e}")
+            raise
+
+    async def _execute_coordinated_tasks(
+        self,
+        teams: List[Any],
+        tasks: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Ejecuta tareas de forma coordinada entre equipos."""
+        try:
+            results = []
+            task_groups = self._group_related_tasks(tasks)
+            
+            for group in task_groups:
+                # Ejecutar tareas del grupo en paralelo
+                group_results = await asyncio.gather(*[
+                    self.team_manager.execute_task(task["team_id"], task["task_id"])
+                    for task in group
+                ])
+                
+                # Sincronizar resultados
+                synchronized_results = await self._synchronize_results(
+                    teams,
+                    group_results
+                )
+                
+                results.extend(synchronized_results)
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error executing coordinated tasks: {e}")
+            raise
+
+    async def _post_process_results(
+        self,
+        results: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Post-procesa los resultados."""
+        try:
+            # Combinar resultados
+            combined_results = self._combine_results(results)
+            
+            # Aplicar optimizaciones
+            optimized_results = await self.optimizer.optimize_results(combined_results)
+            
+            # Validar calidad
+            validated_results = await self._validate_results(optimized_results)
+            
+            return validated_results
+            
+        except Exception as e:
+            logger.error(f"Error post-processing results: {e}")
+            raise
 
     async def cleanup(self) -> None:
-        """
-        Limpia recursos y finaliza procesos.
-        """
+        """Limpia recursos y finaliza procesos."""
         try:
-            # Limpiar agentes especializados
-            cleanup_tasks = [
-                agent.cleanup() for agent in self.specialized_agents.values()
-            ]
-            await asyncio.gather(*cleanup_tasks)
-            
-            # Limpiar otros componentes
+            # Limpiar componentes core
+            await self.team_manager.cleanup()
             if self.edge_manager:
                 await self.edge_manager.cleanup()
-            if self.blockchain_manager:
-                await self.blockchain_manager.cleanup()
-                
-            # Limpiar memoria
-            self.vector_store.delete_collection()
+            await self.comm_system.cleanup()
             
-            logger.info("System cleanup completed successfully")
+            # Limpiar sistemas de soporte
+            await self.monitoring.cleanup()
+            await self.optimizer.cleanup()
+            if self.blockchain:
+                await self.blockchain.cleanup()
+            await self.plugin_manager.cleanup()
+            
+            logger.info("Core Orchestrator cleanup completed")
             
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
+
+    def _load_config(self, config_path: Optional[str] = None) -> Dict[str, Any]:
+        """Carga configuración del sistema."""
+        try:
+            if config_path:
+                with open(config_path) as f:
+                    return json.load(f)
+            return {}
+        except Exception as e:
+            logger.error(f"Error loading config: {e}")
+            return {}
+
+    def _start_monitoring(self) -> None:
+        """Inicia tareas de monitoreo."""
+        asyncio.create_task(self._monitor_system_health())
+        asyncio.create_task(self._monitor_teams_performance())
+        asyncio.create_task(self._monitor_resource_usage())
+
+    async def _monitor_system_health(self) -> None:
+        """Monitorea salud general del sistema."""
+        while True:
+            try:
+                # Verificar componentes
+                health_status = {
+                    "teams": await self.team_manager.get_health_status(),
+                    "edge": await self.edge_manager.get_health_status() if self.edge_manager else None,
+                    "plugins": await self.plugin_manager.get_health_status()
+                }
+                
+                # Actualizar estado
+                self.system_state["health"] = health_status
+                
+                await asyncio.sleep(60)  # Verificar cada minuto
+                
+            except Exception as e:
+                logger.error(f"Error monitoring system health: {e}")
+                await asyncio.sleep(60)
