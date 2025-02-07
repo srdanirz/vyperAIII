@@ -1,12 +1,9 @@
-# vyper_core.py
-
 import logging
 import asyncio
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pathlib import Path
 
-# Importar todos los componentes
 from core_orchestrator import CoreOrchestrator
 from agents.vision_agent import VisionAgent
 from agents.audio_agent import AudioAgent
@@ -18,6 +15,7 @@ from audit.blockchain_manager import BlockchainManager
 from edge.edge_manager import EdgeManager
 from monitoring.monitoring_manager import MonitoringManager
 from plugins.plugin_manager import PluginManager
+from config.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +35,13 @@ class VyperAI:
         self,
         api_key: str,
         engine_mode: str = "openai",
-        config_path: Optional[str] = None
+        env: str = "development"
     ):
         self.api_key = api_key
         self.engine_mode = engine_mode
         
-        # Cargar configuración
-        self.config = self._load_config(config_path)
+        # Obtener configuración
+        self.config = get_config()
         
         # Inicializar componentes core
         self._initialize_core_components()
@@ -57,17 +55,6 @@ class VyperAI:
         
         # Iniciar monitoreo
         self._start_monitoring()
-
-    def _load_config(self, config_path: Optional[str]) -> Dict[str, Any]:
-        """Carga configuración del sistema."""
-        try:
-            if config_path:
-                with open(config_path) as f:
-                    return json.load(f)
-            return {}
-        except Exception as e:
-            logger.error(f"Error loading config: {e}")
-            return {}
 
     def _initialize_core_components(self) -> None:
         """Inicializa todos los componentes principales."""
@@ -136,7 +123,7 @@ class VyperAI:
             # 4. Optimización y monitoreo
             await self._optimize_and_monitor(results)
             
-            # 5. Explicabilidad y auditoría
+           # 5. Explicabilidad y auditoría
             explanation = await self.explainer.explain_decision(results, request)
             await self.blockchain.record_action("process_request", {
                 "request": request,
@@ -170,15 +157,12 @@ class VyperAI:
         """Determina qué tipos de procesamiento se necesitan."""
         processing_types = []
         
-        # Verificar contenido visual
         if self._has_visual_content(request):
             processing_types.append("vision")
             
-        # Verificar contenido de audio
         if self._has_audio_content(request):
             processing_types.append("audio")
             
-        # Siempre incluir security
         processing_types.append("security")
         
         return processing_types
@@ -212,14 +196,12 @@ class VyperAI:
     ) -> None:
         """Realiza optimización y monitoreo."""
         try:
-            # Verificar necesidad de fine-tuning
             if await self.auto_finetuner.check_finetuning_need(
                 self.engine_mode,
                 results
             ):
                 asyncio.create_task(self._start_finetuning())
             
-            # Actualizar métricas
             await self.monitoring.record_metrics(results)
             
         except Exception as e:
@@ -231,19 +213,13 @@ class VyperAI:
             try:
                 health_status = {}
                 
-                # Verificar componentes core
                 health_status["core"] = await self._check_core_health()
-                
-                # Verificar agentes
                 health_status["agents"] = await self._check_agents_health()
-                
-                # Verificar edge nodes
                 health_status["edge"] = await self.edge_manager.get_status()
                 
-                # Actualizar estado
                 self.system_state["components_health"] = health_status
                 
-                await asyncio.sleep(60)  # Verificar cada minuto
+                await asyncio.sleep(60)
                 
             except Exception as e:
                 logger.error(f"Error monitoring system health: {e}")
@@ -253,7 +229,6 @@ class VyperAI:
         """Monitorea rendimiento del sistema."""
         while True:
             try:
-                # Recolectar métricas
                 metrics = {
                     "orchestrator": await self.orchestrator.get_metrics(),
                     "agents": {
@@ -264,10 +239,9 @@ class VyperAI:
                     "blockchain": await self.blockchain.get_metrics()
                 }
                 
-                # Actualizar monitoring
                 await self.monitoring.update_metrics(metrics)
                 
-                await asyncio.sleep(30)  # Actualizar cada 30 segundos
+                await asyncio.sleep(30)
                 
             except Exception as e:
                 logger.error(f"Error monitoring performance: {e}")
@@ -276,16 +250,13 @@ class VyperAI:
     async def cleanup(self) -> None:
         """Limpia recursos del sistema."""
         try:
-            # Limpiar componentes core
             await self.orchestrator.cleanup()
             await self.plugin_manager.cleanup()
             await self.monitoring.cleanup()
             
-            # Limpiar agentes
             for agent in self.agents.values():
                 await agent.cleanup()
             
-            # Limpiar características avanzadas
             await self.edge_manager.cleanup()
             await self.auto_finetuner.cleanup()
             await self.explainer.cleanup()
@@ -320,3 +291,15 @@ class VyperAI:
             "active_tasks": len(self.system_state["active_tasks"]),
             "health": self.system_state["components_health"]
         }
+
+    def _should_use_edge(self, request: Dict[str, Any]) -> bool:
+        """Determina si usar procesamiento edge."""
+        return bool(self.config.get("edge.enabled", False))
+
+    def _has_visual_content(self, request: Dict[str, Any]) -> bool:
+        """Verifica si hay contenido visual."""
+        return "image" in request or "video" in request
+
+    def _has_audio_content(self, request: Dict[str, Any]) -> bool:
+        """Verifica si hay contenido de audio."""
+        return "audio" in request

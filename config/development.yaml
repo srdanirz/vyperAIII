@@ -1,0 +1,15 @@
+monitoring:
+  enabled: true
+  metrics_interval: 30
+  log_level: DEBUG
+
+security:
+  max_requests: 1000
+  rate_limit: 120/minute
+
+performance:
+  timeouts:
+    research: 600
+    analysis: 300
+    content_generation: 480
+    validation: 240
