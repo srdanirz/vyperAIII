@@ -1,102 +1,101 @@
 # Core Dependencies
-python-dotenv==1.0.0
-rich==13.7.0
-pydantic==2.5.2
-PyYAML==6.0.1
-aiohttp==3.9.1
-asyncio==3.4.3
+python-dotenv
+rich
+pydantic
+PyYAML
+aiohttp
+asyncio
 
 # AI and Machine Learning
-langchain==0.0.352
-langchain-openai==0.0.2
-openai==1.3.7
-torch==2.1.1
-numpy==1.26.2
-scikit-learn==1.3.2
-transformers==4.35.2
+langchain
+langchain-openai
+openai
+torch
+numpy
+scikit-learn
+transformers
 
 # Audio Processing
-librosa==0.10.1
-soundfile==0.12.1
-pydub==0.25.1
-pyDynaMix==0.2.1
-audio-effects==0.4.0
+librosa
+soundfile
+pydub
+audio-effects
 
 # Image Processing
-Pillow==10.1.0
-opencv-python==4.8.1.78
-scikit-image==0.22.0
-moviepy==1.0.3
+Pillow
+opencv-python
+scikit-image
+moviepy
 
 # Document Processing
-python-docx==0.8.11
-python-pptx==0.6.21
-reportlab==4.0.8
-pypdf2==3.0.1
+python-docx
+python-pptx
+reportlab
+pypdf2
 
 # Data Processing and Analysis
-pandas==2.1.3
-matplotlib==3.8.2
-seaborn==0.13.0
-plotly==5.18.0
-jupyter==1.0.0
+pandas
+matplotlib
+seaborn
+plotly
+jupyter
 
 # Web and API
-fastapi==0.104.1
-uvicorn==0.24.0
-requests==2.31.0
-websockets==12.0
-httpx==0.25.2
+fastapi
+uvicorn
+requests
+websockets
+httpx
 
 # Database
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
-pymongo==4.6.0
-redis==5.0.1
+sqlalchemy
+psycopg2-binary
+pymongo
+redis
 
 # Testing
-pytest==7.4.3
-pytest-asyncio==0.23.2
-pytest-cov==4.1.0
-faker==20.1.0
+pytest
+pytest-asyncio
+pytest-cov
+faker
 
 # Security
-cryptography==41.0.5
-python-jose==3.3.0
-passlib==1.7.4
-bcrypt==4.0.1
+cryptography
+python-jose
+passlib
+bcrypt
 
 # Monitoring and Logging
-prometheus-client==0.19.0
-grafana-api==1.0.3
-elastic-apm==6.19.0
-sentry-sdk==1.35.0
+prometheus-client
+grafana-api
+elastic-apm
+sentry-sdk
 
 # Development Tools
-black==23.11.0
-flake8==6.1.0
-mypy==1.7.1
-isort==5.12.0
+black
+flake8
+mypy
+isort
 
 # Documentation
-sphinx==7.2.6
-mkdocs==1.5.3
-pdoc3==0.10.0
+sphinx
+mkdocs
+pdoc3
 
 # Cloud Services
-boto3==1.33.6
-google-cloud-storage==2.13.0
-azure-storage-blob==12.19.0
+boto3
+google-cloud-storage
+azure-storage-blob
 
 # Misc Utilities
-tqdm==4.66.1
-python-dateutil==2.8.2
-pytz==2023.3.post1
-colorama==0.4.6
-pyinstaller==6.2.0
+tqdm
+python-dateutil
+pytz
+colorama
+pyinstaller
 
 # Optional but Recommended
-jupyter-black==0.3.4
-pre-commit==3.5.0
-docker==7.0.0
-kubernetes==28.1.0
+jupyter-black
+pre-commit
+docker
+kubernetes
