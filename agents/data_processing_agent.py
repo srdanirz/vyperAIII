@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, Any, Optional
 from .base_agent import BaseAgent
-from llm_factory import get_llm
+from core.llm import get_llm
 
 logger = logging.getLogger(__name__)
 

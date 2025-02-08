@@ -1,115 +1,229 @@
 from pathlib import Path
 import yaml
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from functools import lru_cache
 import threading
+from pydantic import BaseModel, Field, validator
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
-class ConfigError(Exception):
-    pass
+class EngineMode(str, Enum):
+    OPENAI = "openai"
+    DEEPSEEK = "deepseek"
 
-class Config:
+class APIConfig(BaseModel):
+    openai: Dict[str, Any] = Field(
+        default={
+            "model": "gpt-4-turbo",
+            "temperature": 0.7,
+            "max_tokens": 4000,
+            "top_p": 1.0,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0
+        }
+    )
+    deepseek: Dict[str, Any] = Field(
+        default={
+            "model": "deepseek-chat",
+            "temperature": 0.7,
+            "max_tokens": 4000
+        }
+    )
+
+class PerformanceConfig(BaseModel):
+    timeouts: Dict[str, int] = Field(
+        default={
+            "research": 300,
+            "analysis": 180,
+            "content_generation": 240,
+            "validation": 120
+        }
+    )
+    retry: Dict[str, Union[int, float]] = Field(
+        default={
+            "max_attempts": 3,
+            "delay_base": 2,
+            "max_delay": 30
+        }
+    )
+
+class MonitoringConfig(BaseModel):
+    enabled: bool = True
+    metrics_interval: int = 60
+    log_level: str = "INFO"
+    log_file: Optional[str] = None
+
+    @validator("log_level")
+    def validate_log_level(cls, v):
+        valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        if v.upper() not in valid_levels:
+            raise ValueError(f"Invalid log level. Must be one of: {valid_levels}")
+        return v.upper()
+
+class SecurityConfig(BaseModel):
+    max_requests: int = 100
+    rate_limit: str = "60/minute"
+    allowed_ips: list = Field(default=["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"])
+
+class Config(BaseModel):
+    api: APIConfig = Field(default_factory=APIConfig)
+    performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
+    monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    engine_mode: EngineMode = EngineMode.OPENAI
+    environment: str = "development"
+
+class ConfigManager:
     _instance = None
     _lock = threading.Lock()
-    
-    def __new__(cls, *args, **kwargs):
+    _initialized = False
+
+    def __new__(cls):
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
             return cls._instance
 
-    def __init__(self, config_path: Optional[str] = None, env: str = "development"):
-        if hasattr(self, 'initialized'):
+    def __init__(self):
+        if self._initialized:
             return
             
-        self.env = env
-        self.config_data = {}
-        
-        base_config = self._load_yaml_file(Path(__file__).parent / "base.yaml")
-        env_config = self._load_yaml_file(Path(__file__).parent / f"{env}.yaml")
-        
-        self.config_data = self._merge_configs(base_config, env_config)
-        
-        if config_path:
-            custom_config = self._load_yaml_file(Path(config_path))
-            self.config_data = self._merge_configs(self.config_data, custom_config)
+        self.config: Optional[Config] = None
+        self._load_paths = [
+            Path("config/base.yaml"),
+            Path("config/development.yaml"),
+            Path("config/production.yaml")
+        ]
+        self._initialized = True
+
+    def initialize(self, env: str = "development", config_path: Optional[str] = None) -> None:
+        """Initialize configuration with optional custom path"""
+        try:
+            base_config = self._load_yaml_file(self._load_paths[0])
             
-        if not self._validate_config():
-            raise ConfigError("Invalid configuration")
+            # Load environment specific config
+            env_path = Path(f"config/{env}.yaml")
+            env_config = self._load_yaml_file(env_path)
             
-        self.initialized = True
+            # Load custom config if provided
+            custom_config = {}
+            if config_path:
+                custom_config = self._load_yaml_file(Path(config_path))
+            
+            # Merge configurations
+            merged_config = {
+                **base_config,
+                **env_config,
+                **custom_config,
+                "environment": env
+            }
+            
+            # Validate and create config
+            self.config = Config(**merged_config)
+            
+            # Configure logging
+            self._setup_logging()
+            
+            logger.info(f"Configuration initialized for environment: {env}")
+            
+        except Exception as e:
+            logger.error(f"Error initializing configuration: {e}")
+            raise
 
     def _load_yaml_file(self, path: Path) -> Dict[str, Any]:
-        if not path.exists():
-            return {}
+        """Load and parse YAML file with error handling"""
         try:
-            with path.open() as f:
+            if not path.exists():
+                logger.warning(f"Config file not found: {path}")
+                return {}
+                
+            with open(path) as f:
                 return yaml.safe_load(f) or {}
+                
         except Exception as e:
             logger.error(f"Error loading config from {path}: {e}")
             return {}
 
-    def _merge_configs(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-        merged = base.copy()
-        for key, value in override.items():
-            if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
-                merged[key] = self._merge_configs(merged[key], value)
-            else:
-                merged[key] = value
-        return merged
-
-    def _validate_config(self) -> bool:
-        required = {
-            "api": ["openai", "deepseek"],
-            "agent_roles": ["research", "analysis", "validation"],
-            "performance": ["timeouts", "retry"],
-            "monitoring": ["enabled", "metrics_interval"],
-            "security": ["max_requests", "rate_limit"]
-        }
+    def _setup_logging(self) -> None:
+        """Configure logging based on config"""
+        if not self.config:
+            return
+            
+        log_config = self.config.monitoring
         
-        try:
-            for section, fields in required.items():
-                if section not in self.config_data:
-                    logger.error(f"Missing required section: {section}")
-                    return False
-                for field in fields:
-                    if field not in self.config_data[section]:
-                        logger.error(f"Missing required field {field} in section {section}")
-                        return False
-            return True
-        except Exception as e:
-            logger.error(f"Error validating config: {e}")
-            return False
+        # Configure root logger
+        logging.basicConfig(
+            level=getattr(logging, log_config.log_level),
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
+        
+        # Add file handler if log_file specified
+        if log_config.log_file:
+            file_handler = logging.FileHandler(log_config.log_file)
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+            )
+            logging.getLogger().addHandler(file_handler)
 
-    @lru_cache(maxsize=1024)
+    @property
+    def api(self) -> APIConfig:
+        if not self.config:
+            raise RuntimeError("Configuration not initialized")
+        return self.config.api
+
+    @property
+    def performance(self) -> PerformanceConfig:
+        if not self.config:
+            raise RuntimeError("Configuration not initialized")
+        return self.config.performance
+
+    @property
+    def monitoring(self) -> MonitoringConfig:
+        if not self.config:
+            raise RuntimeError("Configuration not initialized")
+        return self.config.monitoring
+
+    @property
+    def security(self) -> SecurityConfig:
+        if not self.config:
+            raise RuntimeError("Configuration not initialized")
+        return self.config.security
+
+    @lru_cache(maxsize=None)
     def get(self, key: str, default: Any = None) -> Any:
+        """Get config value by dot notation key with caching"""
+        if not self.config:
+            raise RuntimeError("Configuration not initialized")
+            
         try:
-            value = self.config_data
+            value = self.config
             for k in key.split('.'):
-                value = value[k]
+                value = getattr(value, k)
             return value
-        except (KeyError, TypeError):
+        except AttributeError:
             return default
 
-    def get_all(self) -> Dict[str, Any]:
-        return self.config_data.copy()
-        
     def reload(self) -> None:
-        with self._lock:
-            self.initialized = False
-            self.__init__(env=self.env)
+        """Reload configuration"""
+        if not self.config:
+            raise RuntimeError("Configuration not initialized")
+        self.initialize(self.config.environment)
+        get_config.cache_clear()
 
-_config_instance: Optional[Config] = None
+# Global config instance
+_config_instance: Optional[ConfigManager] = None
 
-def get_config() -> Config:
+def get_config() -> ConfigManager:
+    """Get global config instance"""
     global _config_instance
     if _config_instance is None:
-        _config_instance = Config()
+        _config_instance = ConfigManager()
     return _config_instance
 
-def initialize_config(config_path: Optional[str] = None, env: str = "development") -> None:
-    global _config_instance
-    with Config._lock:
-        _config_instance = Config(config_path, env)
+def initialize_config(env: str = "development", config_path: Optional[str] = None) -> None:
+    """Initialize global configuration"""
+    config_manager = get_config()
+    config_manager.initialize(env, config_path)

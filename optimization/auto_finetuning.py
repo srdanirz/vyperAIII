@@ -15,7 +15,7 @@ from transformers import (
 )
 
 from .base_optimizer import BaseOptimizer
-from llm_factory import get_llm
+from core.llm import get_llm
 
 logger = logging.getLogger(__name__)
 

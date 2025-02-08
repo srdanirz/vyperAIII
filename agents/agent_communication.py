@@ -25,8 +25,8 @@ class AgentCommunicationSystem:
         
         # Crear LLM según el modo
         if engine_mode == "deepseek":
-            from deepseek_chat import DeepSeekChat
-            self.llm = DeepSeekChat(api_key=api_key)
+            from deepseek_chat import core.llm
+            self.llm = core.llm(api_key=api_key)
         else:
             from langchain_openai import ChatOpenAI
             self.llm = ChatOpenAI(
