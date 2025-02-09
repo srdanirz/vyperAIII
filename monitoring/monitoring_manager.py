@@ -7,113 +7,126 @@ import json
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Set
 from datetime import datetime
 import aiohttp
 from prometheus_client import (
     Counter, Gauge, Histogram,
     CollectorRegistry, push_to_gateway
 )
+from dataclasses import dataclass, field
+import weakref
 
 from core.interfaces import ResourceUsage, PerformanceMetrics
 from core.errors import ProcessingError, handle_errors, ErrorBoundary
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class MetricValidation:
+    """Validation rules for metrics."""
+    min_value: float = float('-inf')
+    max_value: float = float('inf')
+    allowed_types: Set[type] = field(default_factory=lambda: {int, float})
+    required_fields: Set[str] = field(default_factory=set)
+    custom_validator: Optional[callable] = None
+
 class MonitoringManager:
-    """
-    Sistema de monitoreo en tiempo real con métricas.
+    """Enhanced monitoring system with resource management and validation."""
     
-    Características:
-    - Métricas Prometheus/Grafana
-    - Alertas en tiempo real
-    - Análisis de tendencias
-    - Reportes automáticos
-    """
+    # Metric validation rules
+    METRIC_VALIDATORS = {
+        "system_load": MetricValidation(min_value=0, max_value=100),
+        "memory_usage": MetricValidation(min_value=0),
+        "request_latency": MetricValidation(min_value=0),
+        "error_rate": MetricValidation(min_value=0, max_value=1)
+    }
     
     def __init__(self):
-        # Registro Prometheus
+        # Prometheus registry with automatic cleanup
         self.registry = CollectorRegistry()
+        self._registry_ref = weakref.ref(self.registry)
         
-        # Métricas
+        # Initialize metrics with validation
         self._setup_metrics()
         
-        # Cache de métricas
+        # Thread-safe metric cache
+        self._metrics_lock = asyncio.Lock()
         self.metrics_cache: Dict[str, List[float]] = {}
-        
-        # Performance tracking
-        self.performance_metrics = PerformanceMetrics()
         
         # Resource monitoring
         self.resource_usage = ResourceUsage()
+        self._resource_monitor_task: Optional[asyncio.Task] = None
         
-        # Estado y alertas
+        # Alert management
+        self._alert_lock = asyncio.Lock()
         self.active_alerts: Dict[str, Dict[str, Any]] = {}
         self.alert_history: List[Dict[str, Any]] = []
         
-        # Control de tareas
-        self._should_stop = False
+        # Background tasks
         self._monitoring_tasks: List[asyncio.Task] = []
+        self._should_stop = False
+        
+        # Start monitoring
+        self._start_monitoring()
 
     def _setup_metrics(self) -> None:
-        """Configura métricas Prometheus."""
-        self.metrics = {
-            # Sistema
-            "system_load": Gauge(
-                "vyper_system_load",
-                "System load average",
-                registry=self.registry
-            ),
-            "memory_usage": Gauge(
-                "vyper_memory_usage_bytes",
-                "Memory usage in bytes",
-                registry=self.registry
-            ),
+        """Configure Prometheus metrics with validation."""
+        try:
+            self.metrics = {
+                # System metrics
+                "system_load": Gauge(
+                    "vyper_system_load",
+                    "System load average",
+                    registry=self.registry
+                ),
+                "memory_usage": Gauge(
+                    "vyper_memory_usage_bytes",
+                    "Memory usage in bytes",
+                    registry=self.registry
+                ),
+                
+                # API metrics
+                "request_latency": Histogram(
+                    "vyper_request_latency_seconds",
+                    "Request latency in seconds",
+                    buckets=[0.1, 0.5, 1.0, 2.0, 5.0],
+                    registry=self.registry
+                ),
+                "request_count": Counter(
+                    "vyper_request_total",
+                    "Total requests processed",
+                    registry=self.registry
+                ),
+                
+                # Error metrics
+                "error_rate": Gauge(
+                    "vyper_error_rate",
+                    "Current error rate",
+                    registry=self.registry
+                ),
+                
+                # Resource metrics
+                "cpu_usage": Gauge(
+                    "vyper_cpu_usage_percent",
+                    "CPU usage percentage",
+                    registry=self.registry
+                ),
+                "memory_available": Gauge(
+                    "vyper_memory_available_bytes",
+                    "Available memory in bytes",
+                    registry=self.registry
+                )
+            }
             
-            # API
-            "request_latency": Histogram(
-                "vyper_request_latency_seconds",
-                "Request latency in seconds",
-                buckets=[0.1, 0.5, 1.0, 2.0, 5.0],
-                registry=self.registry
-            ),
-            "request_count": Counter(
-                "vyper_request_total",
-                "Total requests processed",
-                registry=self.registry
-            ),
+            # Validate metric configuration
+            for metric_name, validator in self.METRIC_VALIDATORS.items():
+                if metric_name not in self.metrics:
+                    logger.warning(f"Validator defined for non-existent metric: {metric_name}")
             
-            # LLM
-            "model_latency": Histogram(
-                "vyper_model_latency_seconds",
-                "Model inference latency",
-                labelnames=["model_name"],
-                buckets=[0.1, 0.5, 1.0, 2.0, 5.0],
-                registry=self.registry
-            ),
-            "model_errors": Counter(
-                "vyper_model_errors_total",
-                "Total model errors",
-                labelnames=["model_name"],
-                registry=self.registry
-            ),
-            
-            # Edge
-            "edge_node_count": Gauge(
-                "vyper_edge_nodes",
-                "Number of active edge nodes",
-                registry=self.registry
-            ),
-            "edge_task_latency": Histogram(
-                "vyper_edge_task_latency_seconds",
-                "Edge task processing latency",
-                buckets=[0.1, 0.5, 1.0, 2.0, 5.0],
-                registry=self.registry
-            )
-        }
-        
-        # Iniciar monitoreo periódico
-        self._start_monitoring()
+        except Exception as e:
+            logger.error(f"Error setting up metrics: {e}")
+            raise
 
     @handle_errors()
     async def record_metric(
@@ -122,246 +135,297 @@ class MonitoringManager:
         value: float,
         labels: Optional[Dict[str, str]] = None
     ) -> None:
-        """
-        Registra una métrica.
-        
-        Args:
-            metric_name: Nombre de la métrica
-            value: Valor a registrar
-            labels: Labels opcionales
-        """
-        metric = self.metrics.get(metric_name)
-        if not metric:
-            logger.warning(f"Unknown metric: {metric_name}")
-            return
-
+        """Record a metric with validation and thread safety."""
         try:
-            # Registrar valor
+            # Validate metric
+            if not self._validate_metric(metric_name, value):
+                raise ValueError(f"Invalid metric value for {metric_name}: {value}")
+            
+            metric = self.metrics.get(metric_name)
+            if not metric:
+                logger.warning(f"Unknown metric: {metric_name}")
+                return
+
+            # Thread-safe update of cache
+            async with self._metrics_lock:
+                if metric_name not in self.metrics_cache:
+                    self.metrics_cache[metric_name] = []
+                self.metrics_cache[metric_name].append(value)
+
+                # Keep cache size reasonable
+                if len(self.metrics_cache[metric_name]) > 1000:
+                    self.metrics_cache[metric_name] = self.metrics_cache[metric_name][-1000:]
+
+            # Update Prometheus metric
+            # Continuación del método record_metric
             if labels:
                 metric.labels(**labels).observe(value)
             else:
                 metric.observe(value)
 
-            # Actualizar caché
-            if metric_name not in self.metrics_cache:
-                self.metrics_cache[metric_name] = []
-            self.metrics_cache[metric_name].append(value)
-
-            # Verificar alertas
+            # Check alerts
             await self._check_alerts(metric_name, value, labels)
             
-            # Push to Prometheus si está configurado
+            # Push to Prometheus if configured
             if pushgateway_url := os.getenv("PROMETHEUS_PUSHGATEWAY"):
                 try:
-                    push_to_gateway(pushgateway_url, job='vyper_metrics', registry=self.registry)
+                    push_to_gateway(
+                        pushgateway_url,
+                        job='vyper_metrics',
+                        registry=self.registry
+                    )
                 except Exception as e:
                     logger.error(f"Error pushing to Prometheus: {e}")
             
         except Exception as e:
             logger.error(f"Error recording metric {metric_name}: {e}")
+            raise
 
-    async def _send_email_alert(
-        self,
-        alert: Dict[str, Any],
-        email_config: str
-    ) -> None:
-        """Envía alerta por correo electrónico."""
+    def _validate_metric(self, metric_name: str, value: float) -> bool:
+        """Validate a metric value against defined rules."""
         try:
-            # Obtener configuración de email
-            smtp_host = os.getenv("SMTP_HOST", "localhost")
-            smtp_port = int(os.getenv("SMTP_PORT", "587"))
-            smtp_user = os.getenv("SMTP_USER")
-            smtp_pass = os.getenv("SMTP_PASS")
+            validator = self.METRIC_VALIDATORS.get(metric_name)
+            if not validator:
+                return True  # No validation rules defined
             
-            # Crear mensaje
-            msg = MIMEMultipart()
-            msg['From'] = smtp_user
-            msg['To'] = email_config
-            msg['Subject'] = f"Alert: {alert['title']}"
+            # Type validation
+            if not isinstance(value, tuple(validator.allowed_types)):
+                logger.error(f"Invalid type for metric {metric_name}: {type(value)}")
+                return False
             
-            body = f"""
-            Alert Details:
-            Severity: {alert['severity']}
-            Description: {alert['description']}
-            Timestamp: {alert['timestamp']}
+            # Range validation
+            if not validator.min_value <= float(value) <= validator.max_value:
+                logger.error(
+                    f"Value {value} for metric {metric_name} outside valid range "
+                    f"[{validator.min_value}, {validator.max_value}]"
+                )
+                return False
             
-            Metric Data:
-            {json.dumps(alert['metric_data'], indent=2)}
-            """
+            # Custom validation if defined
+            if validator.custom_validator and not validator.custom_validator(value):
+                logger.error(f"Custom validation failed for metric {metric_name}")
+                return False
             
-            msg.attach(MIMEText(body, 'plain'))
+            return True
             
-            # Enviar email
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                server.starttls()
-                if smtp_user and smtp_pass:
-                    server.login(smtp_user, smtp_pass)
-                server.send_message(msg)
+        except Exception as e:
+            logger.error(f"Error validating metric: {e}")
+            return False
+
+    async def _check_alerts(
+        self,
+        metric_name: str,
+        value: float,
+        labels: Optional[Dict[str, str]] = None
+    ) -> None:
+        """Check if metric value should trigger alerts."""
+        try:
+            # Define alert thresholds
+            thresholds = {
+                "error_rate": 0.1,  # 10% error rate
+                "system_load": 80,  # 80% load
+                "memory_usage": 90,  # 90% memory usage
+                "request_latency": 5.0  # 5 seconds latency
+            }
+            
+            if metric_name not in thresholds:
+                return
+                
+            threshold = thresholds[metric_name]
+            if value > threshold:
+                await self._create_alert(
+                    severity="warning",
+                    title=f"High {metric_name}",
+                    description=f"{metric_name} exceeded threshold: {value} > {threshold}",
+                    metric_data={
+                        "metric": metric_name,
+                        "value": value,
+                        "threshold": threshold,
+                        "labels": labels
+                    }
+                )
                 
         except Exception as e:
-            logger.error(f"Error sending email alert: {e}")
+            logger.error(f"Error checking alerts: {e}")
+
+    async def _create_alert(
+        self,
+        severity: str,
+        title: str,
+        description: str,
+        metric_data: Dict[str, Any]
+    ) -> None:
+        """Create and manage an alert."""
+        try:
+            async with self._alert_lock:
+                alert_id = f"alert_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                
+                alert = {
+                    "id": alert_id,
+                    "severity": severity,
+                    "title": title,
+                    "description": description,
+                    "metric_data": metric_data,
+                    "timestamp": datetime.now().isoformat(),
+                    "status": "active"
+                }
+                
+                self.active_alerts[alert_id] = alert
+                self.alert_history.append(alert)
+                
+                # Cleanup old alerts
+                self._cleanup_old_alerts()
+                
+                # Send notifications
+                await self._send_alert_notifications(alert)
+                
+        except Exception as e:
+            logger.error(f"Error creating alert: {e}")
+
+    async def _send_alert_notifications(self, alert: Dict[str, Any]) -> None:
+        """Send alert notifications through configured channels."""
+        try:
+            # Email notification
+            if email_config := os.getenv("ALERT_EMAIL"):
+                await self._send_email_alert(alert, email_config)
+            
+            # Slack notification
+            if slack_webhook := os.getenv("SLACK_WEBHOOK_URL"):
+                await self._send_slack_alert(alert, slack_webhook)
+                
+        except Exception as e:
+            logger.error(f"Error sending alert notifications: {e}")
+
+    async def _send_slack_alert(
+        self,
+        alert: Dict[str, Any],
+        webhook_url: str
+    ) -> None:
+        """Send alert to Slack."""
+        try:
+            message = {
+                "text": f"*{alert['title']}*\n{alert['description']}",
+                "attachments": [{
+                    "fields": [
+                        {"title": "Severity", "value": alert["severity"], "short": True},
+                        {"title": "Time", "value": alert["timestamp"], "short": True}
+                    ],
+                    "color": "danger" if alert["severity"] == "critical" else "warning"
+                }]
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(webhook_url, json=message) as response:
+                    if response.status != 200:
+                        logger.error(f"Error sending Slack alert: {await response.text()}")
+                        
+        except Exception as e:
+            logger.error(f"Error sending Slack alert: {e}")
+
+    def _cleanup_old_alerts(self) -> None:
+        """Clean up resolved and old alerts."""
+        try:
+            current_time = datetime.now()
+            
+            # Remove old alerts from active alerts
+            old_alerts = [
+                alert_id
+                for alert_id, alert in self.active_alerts.items()
+                if (current_time - datetime.fromisoformat(alert["timestamp"])).total_seconds() > 3600
+            ]
+            
+            for alert_id in old_alerts:
+                alert = self.active_alerts.pop(alert_id)
+                alert["status"] = "resolved"
+                alert["resolved_at"] = current_time.isoformat()
+            
+            # Limit alert history size
+            if len(self.alert_history) > 1000:
+                self.alert_history = self.alert_history[-1000:]
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up alerts: {e}")
 
     async def _monitor_system_metrics(self) -> None:
-        """Monitorea métricas del sistema periódicamente."""
+        """Monitor system metrics periodically."""
         while not self._should_stop:
             try:
-                # Actualizar métricas del sistema
-                self.metrics["system_load"].set(os.getloadavg()[0])
-                self.metrics["memory_usage"].set(psutil.Process().memory_info().rss)
+                # Get system metrics
+                cpu_percent = psutil.cpu_percent()
+                memory = psutil.virtual_memory()
                 
-                await asyncio.sleep(60)  # Verificar cada minuto
+                # Record metrics
+                await self.record_metric("cpu_usage", cpu_percent)
+                await self.record_metric("memory_usage", memory.used)
+                await self.record_metric("memory_available", memory.available)
+                
+                # Update resource usage
+                self.resource_usage.cpu_percent = cpu_percent
+                self.resource_usage.memory_percent = memory.percent
+                self.resource_usage.disk_usage_percent = psutil.disk_usage('/').percent
+                
+                await asyncio.sleep(60)  # Check every minute
                 
             except Exception as e:
                 logger.error(f"Error monitoring system metrics: {e}")
                 await asyncio.sleep(60)
 
-    async def _monitor_active_alerts(self) -> None:
-        """Monitorea y actualiza estado de alertas activas."""
-        while not self._should_stop:
-            try:
-                now = datetime.now()
-                
-                # Revisar alertas activas
-                for alert_id, alert in list(self.active_alerts.items()):
-                    alert_time = datetime.fromisoformat(alert["timestamp"])
-                    
-                    # Resolver alertas después de 1 hora
-                    if (now - alert_time).total_seconds() > 3600:
-                        alert["status"] = "resolved"
-                        del self.active_alerts[alert_id]
-                
-                await asyncio.sleep(300)  # Verificar cada 5 minutos
-                
-            except Exception as e:
-                logger.error(f"Error monitoring alerts: {e}")
-                await asyncio.sleep(300)
-
-    async def get_metrics_report(
-        self,
-        start_time: datetime,
-        end_time: datetime
-    ) -> Dict[str, Any]:
-        """Genera un reporte de métricas para un período."""
-        try:
-            report = {
-                "period": {
-                    "start": start_time.isoformat(),
-                    "end": end_time.isoformat()
-                },
-                "system": {
-                    "average_load": self._calculate_average("system_load"),
-                    "peak_memory": self._calculate_peak("memory_usage"),
-                    "resource_usage": self.resource_usage.dict()
-                },
-                "performance": {
-                    "request_latency": {
-                        "average": self._calculate_average("request_latency"),
-                        "p95": self._calculate_percentile("request_latency", 95),
-                        "p99": self._calculate_percentile("request_latency", 99)
-                    },
-                    "model_performance": self._get_model_performance(),
-                    "metrics": self.performance_metrics.dict()
-                },
-                "alerts": {
-                    "active": len(self.active_alerts),
-                    "history": len(self.alert_history),
-                    "by_severity": self._count_alerts_by_severity()
-                }
-            }
-            
-            return report
-            
-        except Exception as e:
-            logger.error(f"Error generating metrics report: {e}")
-            return {}
-
-    def _calculate_average(self, metric_name: str) -> float:
-        """Calcula promedio de una métrica."""
-        try:
-            values = self.metrics_cache.get(metric_name, [])
-            return sum(values) / len(values) if values else 0.0
-        except Exception as e:
-            logger.error(f"Error calculating average: {e}")
-            return 0.0
-
-    def _calculate_percentile(
-        self,
-        metric_name: str,
-        percentile: int
-    ) -> float:
-        """Calcula percentil de una métrica."""
-        try:
-            values = self.metrics_cache.get(metric_name, [])
-            if not values:
-                return 0.0
-            return float(np.percentile(values, percentile))
-        except Exception as e:
-            logger.error(f"Error calculating percentile: {e}")
-            return 0.0
-
-    def _calculate_peak(self, metric_name: str) -> float:
-        """Calcula valor pico de una métrica."""
-        try:
-            values = self.metrics_cache.get(metric_name, [])
-            return max(values) if values else 0.0
-        except Exception as e:
-            logger.error(f"Error calculating peak: {e}")
-            return 0.0
-
-    def _get_model_performance(self) -> Dict[str, Any]:
-        """Obtiene métricas de rendimiento de modelos."""
-        models = ["gpt-4", "deepseek", "claude"]
-        return {
-            model: {
-                "latency": self._calculate_average(f"model_latency_{model}"),
-                "errors": self.metrics["model_errors"].labels(model_name=model)._value.get()
-            }
-            for model in models
-        }
-
-    def _count_alerts_by_severity(self) -> Dict[str, int]:
-        """Cuenta alertas por severidad."""
-        counts = {}
-        for alert in self.alert_history:
-            severity = alert["severity"]
-            counts[severity] = counts.get(severity, 0) + 1
-        return counts
+    def _start_monitoring(self) -> None:
+        """Start monitoring background tasks."""
+        self._monitoring_tasks = [
+            asyncio.create_task(self._monitor_system_metrics()),
+            asyncio.create_task(self._monitor_active_alerts())
+        ]
 
     async def cleanup(self) -> None:
-        """Limpia recursos del sistema de monitoreo."""
+        """Clean up resources and stop monitoring."""
         try:
-            # Señalizar detención de monitoreo
+            # Signal stop
             self._should_stop = True
             
-            # Cancelar tareas de monitoreo
+            # Cancel monitoring tasks
             for task in self._monitoring_tasks:
                 task.cancel()
                 
+            # Wait for tasks to complete
             await asyncio.gather(*self._monitoring_tasks, return_exceptions=True)
             
-            # Limpiar datos
+            # Clear metrics and alerts
             self.metrics_cache.clear()
             self.active_alerts.clear()
             
-            # Reset metrics
-            self.performance_metrics = PerformanceMetrics()
-            self.resource_usage = ResourceUsage()
+            # Clear Prometheus registry
+            if reg := self._registry_ref():
+                reg.clear()
             
             logger.info("Monitoring Manager cleanup completed")
             
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
 
-
     async def get_status(self) -> Dict[str, Any]:
-        """Obtiene estado del sistema de monitoreo."""
-        return {
-            "active_metrics": list(self.metrics.keys()),
-            "active_alerts": len(self.active_alerts),
-            "metrics_cache_size": {
-                metric: len(values)
-                for metric, values in self.metrics_cache.items()
-            },
-            "performance": self.performance_metrics.dict(),
-            "resources": self.resource_usage.dict()
-        }
+        """Get current monitoring system status."""
+        try:
+            return {
+                "active_metrics": list(self.metrics.keys()),
+                "active_alerts": len(self.active_alerts),
+                "metrics_cache_size": {
+                    metric: len(values)
+                    for metric, values in self.metrics_cache.items()
+                },
+                "resource_usage": self.resource_usage.dict(),
+                "monitoring_tasks": {
+                    "total": len(self._monitoring_tasks),
+                    "running": sum(
+                        1 for task in self._monitoring_tasks
+                        if not task.done() and not task.cancelled()
+                    )
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting monitoring status: {e}")
+            return {
+                "error": str(e),
+                "status": "error",
+                "timestamp": datetime.now().isoformat()
+            }
