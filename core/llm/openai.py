@@ -1,7 +1,6 @@
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
-
 from .base import BaseLLM
 from ..errors import APIError
 
@@ -29,16 +28,26 @@ class OpenAIChat(BaseLLM):
                 model=self.model,
                 messages=messages,
                 temperature=self.temperature,
-                max_tokens=self.max_tokens
+                max_tokens=self.max_tokens,
+                **self.extra_config
             )
             
-            # Create response object matching expected interface
-            return MessageResponse(response.choices[0].message.content)
+            return {
+                "generations": [[{
+                    "message": {
+                        "content": response.choices[0].message.content
+                    }
+                }]]
+            }
             
         except Exception as e:
             await self._handle_api_error(e)
     
-    async def acompletion(self, prompt: str, **kwargs) -> str:
+    async def acompletion(
+        self, 
+        prompt: str,
+        **kwargs
+    ) -> str:
         """Generate completion using OpenAI Chat API."""
         try:
             messages = [{"role": "user", "content": prompt}]
@@ -47,7 +56,7 @@ class OpenAIChat(BaseLLM):
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                **kwargs
+                **{**self.extra_config, **kwargs}
             )
             return response.choices[0].message.content
             
@@ -61,23 +70,44 @@ class OpenAIChat(BaseLLM):
             raise APIError("OpenAI rate limit exceeded", {"retry_after": 60})
         elif "invalid_api_key" in error_msg.lower():
             raise APIError("Invalid OpenAI API key")
+        elif "context_length_exceeded" in error_msg.lower():
+            raise APIError("OpenAI context length exceeded")
         else:
             raise APIError(f"OpenAI API error: {error_msg}")
 
-class MessageResponse:
-    """Mock response object matching expected interface."""
-    
-    def __init__(self, content: str):
-        self.generations = [[MockGeneration(content)]]
+    def _validate_messages(self, messages: List[Dict[str, str]]) -> None:
+        """Validate message format specifically for OpenAI."""
+        super()._validate_messages(messages)
+        
+        # Additional OpenAI-specific validations
+        for msg in messages:
+            if msg["role"] not in ["system", "user", "assistant", "function"]:
+                raise ValueError(f"Invalid role for OpenAI: {msg['role']}")
+            
+            if "content" not in msg and msg["role"] != "function":
+                raise ValueError("Messages must have content except for function messages")
 
-class MockGeneration:
-    """Mock generation object matching expected interface."""
-    
-    def __init__(self, content: str):
-        self.message = MockMessage(content)
-
-class MockMessage:
-    """Mock message object matching expected interface."""
-    
-    def __init__(self, content: str):
-        self.content = content
+    def _prepare_messages(
+        self,
+        messages: List[Dict[str, str]]
+    ) -> List[Dict[str, str]]:
+        """Prepare messages for OpenAI API call."""
+        self._validate_messages(messages)
+        
+        # Convert any custom message formats to OpenAI format
+        prepared_messages = []
+        for msg in messages:
+            prepared_msg = {
+                "role": msg["role"],
+                "content": msg.get("content", "")
+            }
+            
+            # Handle function messages
+            if msg["role"] == "function":
+                prepared_msg["name"] = msg.get("name", "unknown_function")
+                if "function_call" in msg:
+                    prepared_msg["function_call"] = msg["function_call"]
+                    
+            prepared_messages.append(prepared_msg)
+            
+        return prepared_messages

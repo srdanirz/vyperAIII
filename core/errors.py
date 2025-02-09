@@ -21,6 +21,15 @@ class VyperError(Exception):
         self.details = details or {}
         super().__init__(message)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert error to dictionary format"""
+        return {
+            "error_type": self.__class__.__name__,
+            "message": self.message,
+            "details": self.details,
+            "timestamp": datetime.now().isoformat()
+        }
+
 class ConfigurationError(VyperError):
     """Raised when there's a configuration error"""
     pass
@@ -35,6 +44,14 @@ class ValidationError(VyperError):
 
 class ProcessingError(VyperError):
     """Raised when processing fails"""
+    pass
+
+class AuthenticationError(VyperError):
+    """Raised when authentication fails"""
+    pass
+
+class ResourceError(VyperError):
+    """Raised when there's a resource-related error"""
     pass
 
 def setup_logging(
@@ -107,13 +124,15 @@ def log_error(
 
 def handle_errors(
     error_types: Tuple[Exception, ...] = (Exception,),
-    default_return: Any = None
+    default_return: Any = None,
+    log_errors: bool = True
 ) -> Callable:
     """Decorator for handling errors
     
     Args:
         error_types: Tuple of exception types to catch
         default_return: Default value to return on error
+        log_errors: Whether to log errors
         
     Returns:
         Decorated function that handles specified errors
@@ -124,12 +143,15 @@ def handle_errors(
             try:
                 return await func(*args, **kwargs)
             except error_types as e:
-                logger = logging.getLogger(func.__module__)
-                log_error(logger, e, {
-                    "function": func.__name__,
-                    "args": args,
-                    "kwargs": kwargs
-                })
+                if log_errors:
+                    logger = logging.getLogger(func.__module__)
+                    log_error(logger, e, {
+                        "function": func.__name__,
+                        "args": args,
+                        "kwargs": kwargs
+                    })
+                if isinstance(e, VyperError):
+                    return {"error": e.to_dict()}
                 return default_return
 
         @wraps(func)
@@ -137,17 +159,18 @@ def handle_errors(
             try:
                 return func(*args, **kwargs)
             except error_types as e:
-                logger = logging.getLogger(func.__module__)
-                log_error(logger, e, {
-                    "function": func.__name__,
-                    "args": args,
-                    "kwargs": kwargs
-                })
+                if log_errors:
+                    logger = logging.getLogger(func.__module__)
+                    log_error(logger, e, {
+                        "function": func.__name__,
+                        "args": args,
+                        "kwargs": kwargs
+                    })
+                if isinstance(e, VyperError):
+                    return {"error": e.to_dict()}
                 return default_return
 
-        if asyncio.iscoroutinefunction(func):
-            return async_wrapper
-        return sync_wrapper
+        return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
     return decorator
 
 class ErrorBoundary:
@@ -158,38 +181,50 @@ class ErrorBoundary:
         logger: logging.Logger,
         error_message: str,
         error_types: Tuple[Exception, ...] = (Exception,),
-        on_error: Optional[Callable] = None
+        on_error: Optional[Callable] = None,
+        suppress_errors: bool = True
     ):
         self.logger = logger
         self.error_message = error_message
         self.error_types = error_types
         self.on_error = on_error
+        self.suppress_errors = suppress_errors
 
     async def __aenter__(self) -> 'ErrorBoundary':
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+    async def __aexit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[Exception],
+        exc_tb: Optional[Any]
+    ) -> bool:
         if exc_val and isinstance(exc_val, self.error_types):
             log_error(self.logger, exc_val, {
                 "boundary_message": self.error_message
             })
             if self.on_error:
                 await self.on_error(exc_val)
-            return True  # Suppress exception
-        return False  # Re-raise exception
+            return self.suppress_errors
+        return False
 
     def __enter__(self) -> 'ErrorBoundary':
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[Exception],
+        exc_tb: Optional[Any]
+    ) -> bool:
         if exc_val and isinstance(exc_val, self.error_types):
             log_error(self.logger, exc_val, {
                 "boundary_message": self.error_message
             })
             if self.on_error:
                 asyncio.create_task(self.on_error(exc_val))
-            return True  # Suppress exception
-        return False  # Re-raise exception
+            return self.suppress_errors
+        return False
 
 class ErrorCollector:
     """Collect and aggregate errors"""
@@ -224,7 +259,8 @@ class ErrorCollector:
             "total_errors": len(self.errors),
             "has_critical": self.has_critical,
             "errors_by_type": self._group_by_type(),
-            "latest_error": self.errors[-1] if self.errors else None
+            "latest_error": self.errors[-1] if self.errors else None,
+            "error_count_by_severity": self._count_by_severity()
         }
 
     def _group_by_type(self) -> Dict[str, int]:
@@ -235,49 +271,15 @@ class ErrorCollector:
             error_counts[error_type] = error_counts.get(error_type, 0) + 1
         return error_counts
 
-async def handle_error_with_retry(
-    func: Callable,
-    max_retries: int = 3,
-    base_delay: float = 1.0,
-    max_delay: float = 30.0,
-    logger: Optional[logging.Logger] = None
-) -> Any:
-    """Execute function with retry on error
-    
-    Args:
-        func: Function to execute
-        max_retries: Maximum number of retries
-        base_delay: Base delay between retries
-        max_delay: Maximum delay between retries
-        logger: Logger instance
-        
-    Returns:
-        Result from the function execution
-        
-    Raises:
-        The last error encountered after max retries
-    """
-    if logger is None:
-        logger = logging.getLogger(__name__)
+    def _count_by_severity(self) -> Dict[str, int]:
+        """Count errors by severity"""
+        severity_counts = {}
+        for error in self.errors:
+            severity = error["severity"]
+            severity_counts[severity] = severity_counts.get(severity, 0) + 1
+        return severity_counts
 
-    retries = 0
-    while True:
-        try:
-            if asyncio.iscoroutinefunction(func):
-                return await func()
-            return func()
-        except Exception as e:
-            retries += 1
-            if retries >= max_retries:
-                log_error(logger, e, {
-                    "retries": retries,
-                    "max_retries": max_retries
-                })
-                raise
-
-            delay = min(base_delay * (2 ** (retries - 1)), max_delay)
-            logger.warning(
-                f"Retry {retries}/{max_retries} after error: {e}. "
-                f"Waiting {delay} seconds..."
-            )
-            await asyncio.sleep(delay)
+    def clear(self) -> None:
+        """Clear all collected errors"""
+        self.errors.clear()
+        self.has_critical = False

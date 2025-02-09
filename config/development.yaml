@@ -2,10 +2,25 @@ monitoring:
   enabled: true
   metrics_interval: 30
   log_level: DEBUG
+  alerts:
+    enabled: false
+  prometheus:
+    enabled: false
+  grafana:
+    enabled: false
 
 security:
   max_requests: 1000
   rate_limit: 120/minute
+  authentication:
+    enabled: false
+
+edge:
+  enabled: false
+  auto_discovery: false
+
+blockchain:
+  enabled: false
 
 performance:
   timeouts:
@@ -13,3 +28,21 @@ performance:
     analysis: 300
     content_generation: 480
     validation: 240
+  cache:
+    max_memory_items: 2000
+    max_disk_items: 20000
+  resource_limits:
+    max_cpu_percent: 90
+    max_memory_percent: 90
+
+plugins:
+  enabled: true
+  auto_reload: true
+  allowed_sources: [local, verified, development]
+
+storage:
+  type: local
+  backends:
+    - local:
+        path: "./data/development"
+        max_size: "10Gi"

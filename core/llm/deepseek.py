@@ -9,14 +9,14 @@ from ..errors import APIError
 
 logger = logging.getLogger(__name__)
 
-class core.llm(BaseLLM):
+class DeepSeekChat(BaseLLM):
     """DeepSeek Chat implementation."""
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.base_url = "https://api.deepseek.com/v1"
         
-        # SSL context con certifi
+        # SSL context with certifi
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.load_verify_locations(cafile=certifi.where())
         
@@ -34,7 +34,7 @@ class core.llm(BaseLLM):
             
             messages = self._prepare_messages(messages_batch[0])
             
-            # Preparar payload
+            # Prepare payload
             payload = {
                 "model": self.model,
                 "messages": messages,
@@ -50,7 +50,7 @@ class core.llm(BaseLLM):
                 "Authorization": f"Bearer {self.api_key}"
             }
             
-            # Crear conector con SSL
+            # Create connector with SSL
             connector = aiohttp.TCPConnector(ssl=self.ssl_context)
             
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -71,7 +71,7 @@ class core.llm(BaseLLM):
             if "choices" not in data:
                 raise APIError("Invalid response from DeepSeek API")
             
-            # Crear respuesta compatible
+            # Create compatible response
             return MessageResponse(data["choices"][0]["message"]["content"])
             
         except Exception as e:

@@ -4,14 +4,16 @@ from typing import Dict, Any, List, Optional, Set
 from datetime import datetime
 import uuid
 
-from ..errors import ErrorBoundary, handle_errors, ProcessingError
+from ..errors import ProcessingError, handle_errors, ErrorBoundary
 from ..cache import CacheManager
 from ..interfaces import (
     Team,
     TeamMember,
     RequestContext,
-    ProcessingResult,
-    Priority
+    EngineMode,
+    Priority,
+    create_team,
+    create_team_member
 )
 from agents.agent_communication import AgentCommunicationSystem
 from monitoring.monitoring_manager import MonitoringManager
@@ -21,25 +23,31 @@ logger = logging.getLogger(__name__)
 
 class TeamManager:
     """
-    Gestor de equipos dinámicos con gestión de recursos y manejo de errores.
+    Manager for dynamic team creation and management.
     """
     
-    def __init__(self, api_key: str, engine_mode: str = "openai"):
+    def __init__(
+        self,
+        api_key: str,
+        engine_mode: str = "openai"
+    ):
         self.api_key = api_key
-        self.engine_mode = engine_mode
+        self.engine_mode = EngineMode(engine_mode)
         self.config = get_config()
-        self.cache = CacheManager()
         
-        # Sistemas de soporte
+        # Communication and monitoring
         self.comm_system = AgentCommunicationSystem(api_key, engine_mode)
         self.monitoring = MonitoringManager()
         
-        # Estado y equipos
-        self.teams: Dict[str, Team] = {}
-        self.active_tasks: Dict[str, Dict[str, Any]] = {}
+        # Team management
+        self.active_teams: Dict[str, Team] = {}
+        self.team_assignments: Dict[str, List[str]] = {}  # team_id -> task_ids
         
-        # Métricas
-        self.performance_metrics = {
+        # Cache for team states
+        self.cache = CacheManager()
+        
+        # Performance tracking
+        self.metrics = {
             "teams_created": 0,
             "active_teams": 0,
             "completed_tasks": 0,
@@ -47,307 +55,305 @@ class TeamManager:
             "average_completion_time": 0.0
         }
 
-    @handle_errors()
-    async def process_request(
+    async def create_team(
         self,
-        request: Dict[str, Any]
-    ) -> ProcessingResult:
-        """
-        Procesa una solicitud usando equipos dinámicos.
-        
-        Args:
-            request: Solicitud a procesar
-            
-        Returns:
-            ProcessingResult con resultados y metadatos
-        """
-        start_time = datetime.now()
-        
+        name: str,
+        roles: List[str],
+        objectives: List[str],
+        context: Optional[RequestContext] = None
+    ) -> Team:
+        """Create a new specialized team."""
         try:
-            # Crear contexto
-            context = RequestContext(
-                request_id=str(uuid.uuid4()),
-                metadata=request.get("metadata", {}),
-                priority=Priority(request.get("priority", Priority.MEDIUM))
+            # Generate team ID
+            team_id = f"team_{uuid.uuid4().hex[:8]}"
+            
+            # Create team members
+            members: Dict[str, TeamMember] = {}
+            for role in roles:
+                member_id = f"member_{uuid.uuid4().hex[:8]}"
+                capabilities = self._get_role_capabilities(role)
+                members[member_id] = create_team_member(
+                    member_id=member_id,
+                    role=role,
+                    capabilities=capabilities
+                )
+            
+            # Create team
+            team = create_team(
+                team_id=team_id,
+                name=name,
+                members=members,
+                objectives=objectives
             )
             
-            # Analizar requerimientos
-            analysis = await self._analyze_requirements(request)
+            # Initialize team state
+            self.active_teams[team_id] = team
+            self.team_assignments[team_id] = []
             
-            # Crear o asignar equipos
-            teams = await self._create_teams(analysis, context)
+            # Update metrics
+            self.metrics["teams_created"] += 1
+            self.metrics["active_teams"] = len(self.active_teams)
             
-            # Procesar con equipos
-            results = await self._process_with_teams(teams, request, context)
-            
-            # Actualizar métricas
-            execution_time = (datetime.now() - start_time).total_seconds()
-            self._update_metrics(True, execution_time)
-            
-            return ProcessingResult(
-                status="success",
-                data=results,
-                metadata={
-                    "request_id": context.request_id,
-                    "execution_time": execution_time,
-                    "teams": [team.id for team in teams]
-                }
-            )
+            logger.info(f"Created new team: {team_id} ({name})")
+            return team
             
         except Exception as e:
-            logger.error(f"Error processing request: {e}")
-            self._update_metrics(False, (datetime.now() - start_time).total_seconds())
-            raise ProcessingError("Request processing failed", {"error": str(e)})
+            logger.error(f"Error creating team: {e}")
+            raise ProcessingError(f"Team creation failed: {str(e)}")
 
-    async def _analyze_requirements(
+    async def assign_task(
         self,
-        request: Dict[str, Any]
+        team_id: str,
+        task: Dict[str, Any],
+        priority: Priority = Priority.MEDIUM
     ) -> Dict[str, Any]:
-        """Analiza requerimientos de la solicitud."""
+        """Assign a task to a team."""
         try:
-            # Determinar roles necesarios
-            roles_needed = []
-            for role, info in self.config.get("agent_roles", {}).items():
-                if any(skill in request.get("requirements", []) for skill in info.get("skills", [])):
-                    roles_needed.append(role)
+            team = self._get_team(team_id)
             
-            if not roles_needed:
-                roles_needed = ["research", "analysis", "validation"]
+            # Validate team capacity
+            if not self._check_team_capacity(team):
+                raise ProcessingError("Team at maximum capacity")
             
-            return {
-                "roles": roles_needed,
-                "priority": request.get("priority", Priority.MEDIUM),
-                "metadata": request.get("metadata", {})
+            # Prepare task
+            task_id = f"task_{uuid.uuid4().hex[:8]}"
+            task_record = {
+                "id": task_id,
+                "team_id": team_id,
+                "priority": priority,
+                "data": task,
+                "status": "assigned",
+                "assigned_at": datetime.now().isoformat()
             }
             
-        except Exception as e:
-            logger.error(f"Error analyzing requirements: {e}")
-            raise ProcessingError("Failed to analyze requirements", {"error": str(e)})
-
-    async def _create_teams(
-        self,
-        analysis: Dict[str, Any],
-        context: RequestContext
-    ) -> List[Team]:
-        """Crea o asigna equipos basados en el análisis."""
-        try:
-            teams = []
+            # Assign to team
+            self.team_assignments[team_id].append(task_id)
             
-            # Intentar reutilizar equipos existentes
-            for role in analysis["roles"]:
-                existing_team = await self._find_suitable_team(role, context)
-                if existing_team:
-                    teams.append(existing_team)
-                    continue
-                
-                # Crear nuevo equipo si no hay uno disponible
-                new_team = await self._create_new_team(role, context)
-                teams.append(new_team)
+            # Execute task
+            result = await self._execute_team_task(team, task_record)
             
-            self.performance_metrics["teams_created"] += len(teams)
-            self.performance_metrics["active_teams"] = len(self.teams)
+            # Update metrics
+            self._update_metrics(team_id, result)
             
-            return teams
+            return result
             
         except Exception as e:
-            logger.error(f"Error creating teams: {e}")
-            raise ProcessingError("Failed to create teams", {"error": str(e)})
+            logger.error(f"Error assigning task: {e}")
+            raise ProcessingError(f"Task assignment failed: {str(e)}")
 
-    async def _find_suitable_team(
-        self,
-        role: str,
-        context: RequestContext
-    ) -> Optional[Team]:
-        """Busca un equipo existente adecuado."""
-        for team in self.teams.values():
-            if (
-                # Verificar si el equipo tiene el rol necesario
-                any(member.role == role for member in team.members.values()) and
-                # Verificar disponibilidad
-                len(team.active_tasks) < self.config.get("teams.max_tasks", 5) and
-                # Verificar prioridad
-                context.priority.value <= Priority.MEDIUM
-            ):
-                return team
-        return None
-
-    async def _create_new_team(
-        self,
-        role: str,
-        context: RequestContext
-    ) -> Team:
-        """Crea un nuevo equipo."""
-        team_id = str(uuid.uuid4())
-        
-        # Crear miembros del equipo
-        members = {}
-        role_config = self.config.get(f"agent_roles.{role}")
-        
-        # Miembro principal
-        member_id = str(uuid.uuid4())
-        members[member_id] = TeamMember(
-            id=member_id,
-            role=role,
-            capabilities=role_config.get("skills", [])
-        )
-        
-        # Miembros de soporte si es necesario
-        if context.priority >= Priority.HIGH:
-            support_roles = role_config.get("support_roles", [])
-            for support_role in support_roles:
-                support_id = str(uuid.uuid4())
-                members[support_id] = TeamMember(
-                    id=support_id,
-                    role=support_role,
-                    capabilities=self.config.get(f"agent_roles.{support_role}.skills", [])
-                )
-        
-        # Crear y registrar equipo
-        team = Team(
-            id=team_id,
-            name=f"Team-{role}-{team_id[:8]}",
-            members=members,
-            objectives=[
-                f"Handle {role} tasks",
-                "Ensure quality and efficiency",
-                "Collaborate with other teams"
-            ]
-        )
-        
-        self.teams[team_id] = team
+    def _get_team(self, team_id: str) -> Team:
+        """Get team by ID with validation."""
+        team = self.active_teams.get(team_id)
+        if not team:
+            raise ProcessingError(f"Team not found: {team_id}")
         return team
 
-    async def _process_with_teams(
-        self,
-        teams: List[Team],
-        request: Dict[str, Any],
-        context: RequestContext
-    ) -> Dict[str, Any]:
-        """Procesa una solicitud usando los equipos asignados."""
-        try:
-            results = {}
-            tasks = []
-            
-            # Distribuir trabajo entre equipos
-            for team in teams:
-                task = asyncio.create_task(
-                    self._execute_team_task(team, request, context)
-                )
-                tasks.append((team.id, task))
-            
-            # Esperar resultados
-            for team_id, task in tasks:
-                try:
-                    result = await task
-                    results[team_id] = result
-                    self.performance_metrics["completed_tasks"] += 1
-                except Exception as e:
-                    logger.error(f"Error in team {team_id}: {e}")
-                    results[team_id] = {"error": str(e)}
-                    self.performance_metrics["failed_tasks"] += 1
-            
-            return {
-                "team_results": results,
-                "metadata": {
-                    "teams_involved": len(teams),
-                    "timestamp": datetime.now().isoformat()
-                }
-            }
-            
-        except Exception as e:
-            logger.error(f"Error processing with teams: {e}")
-            raise ProcessingError("Team processing failed", {"error": str(e)})
+    def _check_team_capacity(self, team: Team) -> bool:
+        """Check if team has capacity for new tasks."""
+        max_tasks = self.config.get("teams.max_tasks_per_team", 10)
+        return len(team.active_tasks) < max_tasks
 
     async def _execute_team_task(
         self,
         team: Team,
-        request: Dict[str, Any],
-        context: RequestContext
+        task: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Ejecuta una tarea con un equipo específico."""
+        """Execute a task with a team."""
         try:
-            task_id = str(uuid.uuid4())
+            start_time = datetime.now()
             
-            # Registrar tarea activa
-            self.active_tasks[task_id] = {
-                "team_id": team.id,
-                "status": "running",
-                "start_time": datetime.now().isoformat()
-            }
-            team.active_tasks.add(task_id)
-            
-            # Ejecutar con cada miembro
+            # Distribute task to members
             member_results = {}
             for member_id, member in team.members.items():
                 result = await self.comm_system.send_message(
                     from_agent=member.role,
-                    content=request.get("prompt", ""),
+                    content=task["data"],
                     metadata={
-                        **context.metadata,
                         "team_id": team.id,
-                        "member_id": member_id
+                        "member_id": member_id,
+                        "task_id": task["id"]
                     }
                 )
                 member_results[member_id] = result
             
-            # Limpiar estado
-            team.active_tasks.remove(task_id)
-            self.active_tasks[task_id]["status"] = "completed"
-            self.active_tasks[task_id]["end_time"] = datetime.now().isoformat()
+            # Process results
+            execution_time = (datetime.now() - start_time).total_seconds()
             
             return {
-                "status": "success",
-                "member_results": member_results,
-                "metadata": {
-                    "task_id": task_id,
-                    "team_id": team.id
+                "task_id": task["id"],
+                "status": "completed",
+                "results": member_results,
+                "execution_time": execution_time,
+                "metrics": {
+                    "members_participated": len(member_results),
+                    "average_response_time": execution_time / len(member_results)
                 }
             }
             
         except Exception as e:
             logger.error(f"Error executing team task: {e}")
-            if task_id in team.active_tasks:
-                team.active_tasks.remove(task_id)
             raise
 
-    def _update_metrics(self, success: bool, execution_time: float) -> None:
-        """Actualiza métricas de rendimiento."""
-        total = self.performance_metrics["completed_tasks"] + self.performance_metrics["failed_tasks"]
-        
-        if total > 0:
-            prev_avg = self.performance_metrics["average_completion_time"]
-            new_avg = (prev_avg * (total - 1) + execution_time) / total
-            self.performance_metrics["average_completion_time"] = new_avg
+    def _get_role_capabilities(self, role: str) -> List[str]:
+        """Get capabilities for a specific role."""
+        role_config = self.config.get("agent_roles", {}).get(role, {})
+        return role_config.get("skills", [])
+
+    def _update_metrics(
+        self,
+        team_id: str,
+        result: Dict[str, Any]
+    ) -> None:
+        """Update performance metrics."""
+        try:
+            self.metrics["completed_tasks"] += 1
+            if result.get("status") == "completed":
+                # Update success metrics
+                current_avg = self.metrics["average_completion_time"]
+                total_tasks = self.metrics["completed_tasks"]
+                new_time = result["execution_time"]
+                
+                self.metrics["average_completion_time"] = (
+                    (current_avg * (total_tasks - 1) + new_time) / total_tasks
+                )
+            else:
+                self.metrics["failed_tasks"] += 1
+            
+        except Exception as e:
+            logger.error(f"Error updating metrics: {e}")
+
+    async def get_team_status(self, team_id: str) -> Dict[str, Any]:
+        """Get current status of a team."""
+        team = self._get_team(team_id)
+        return {
+            "id": team.id,
+            "name": team.name,
+            "active_tasks": len(team.active_tasks),
+            "members": len(team.members),
+            "metrics": {
+                "tasks_completed": len(self.team_assignments[team_id]),
+                "last_active": team.metadata.get("last_active")
+            }
+        }
+
+    async def dissolve_team(self, team_id: str) -> None:
+        """Dissolve a team and clean up its resources."""
+        try:
+            team = self._get_team(team_id)
+            
+            # Cancel active tasks
+            active_tasks = list(team.active_tasks)
+            for task_id in active_tasks:
+                await self._cancel_task(team_id, task_id)
+            
+            # Remove team
+            del self.active_teams[team_id]
+            del self.team_assignments[team_id]
+            
+            # Update metrics
+            self.metrics["active_teams"] = len(self.active_teams)
+            
+            logger.info(f"Dissolved team: {team_id}")
+            
+        except Exception as e:
+            logger.error(f"Error dissolving team: {e}")
+            raise
+
+    async def _cancel_task(
+        self,
+        team_id: str,
+        task_id: str
+    ) -> None:
+        """Cancel a task and update records."""
+        try:
+            team = self._get_team(team_id)
+            team.active_tasks.discard(task_id)
+            
+            if task_id in self.team_assignments[team_id]:
+                self.team_assignments[team_id].remove(task_id)
+                
+        except Exception as e:
+            logger.error(f"Error cancelling task: {e}")
 
     async def cleanup(self) -> None:
-        """Limpia recursos del gestor."""
+        """Clean up manager resources."""
         try:
+            # Dissolve all teams
+            for team_id in list(self.active_teams.keys()):
+                await self.dissolve_team(team_id)
+            
+            # Clean up communication system
             await self.comm_system.cleanup()
             
-            for team in self.teams.values():
-                team.active_tasks.clear()
-                
-            self.teams.clear()
-            self.active_tasks.clear()
-            
+            # Clear cache
             await self.cache.cleanup()
+            
+            # Reset metrics
+            self.metrics = {
+                "teams_created": 0,
+                "active_teams": 0,
+                "completed_tasks": 0,
+                "failed_tasks": 0,
+                "average_completion_time": 0.0
+            }
+            
             logger.info("Team manager cleanup completed")
             
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
 
     async def get_status(self) -> Dict[str, Any]:
-        """Obtiene estado actual del gestor."""
+        """Get current status of the manager."""
         return {
-            "teams": {
-                "total": len(self.teams),
-                "active": len([t for t in self.teams.values() if t.active_tasks])
-            },
-            "tasks": {
-                "active": len(self.active_tasks),
-                "completed": self.performance_metrics["completed_tasks"],
-                "failed": self.performance_metrics["failed_tasks"]
-            },
-            "performance": self.performance_metrics,
-            "cache_status": await self.cache.get_status()
+            "active_teams": len(self.active_teams),
+            "total_tasks": sum(len(tasks) for tasks in self.team_assignments.values()),
+            "metrics": self.metrics,
+            "health": await self.get_health_status()
         }
+
+    async def get_health_status(self) -> Dict[str, Any]:
+        """Get health status of the manager."""
+        try:
+            return {
+                "status": "healthy" if self._check_health() else "degraded",
+                "teams": {
+                    "total": len(self.active_teams),
+                    "overloaded": self._count_overloaded_teams()
+                },
+                "tasks": {
+                    "total": sum(len(tasks) for tasks in self.team_assignments.values()),
+                    "completed": self.metrics["completed_tasks"],
+                    "failed": self.metrics["failed_tasks"]
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting health status: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def _check_health(self) -> bool:
+        """Check if manager is healthy."""
+        try:
+            # Check error rate
+            total_tasks = self.metrics["completed_tasks"] + self.metrics["failed_tasks"]
+            if total_tasks > 0:
+                error_rate = self.metrics["failed_tasks"] / total_tasks
+                if error_rate > 0.2:  # More than 20% failure rate
+                    return False
+            
+            # Check team load
+            if self._count_overloaded_teams() > len(self.active_teams) * 0.3:  # 30% teams overloaded
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking health: {e}")
+            return False
+
+    def _count_overloaded_teams(self) -> int:
+        """Count number of overloaded teams."""
+        max_tasks = self.config.get("teams.max_tasks_per_team", 10)
+        return sum(
+            1 for team in self.active_teams.values()
+            if len(team.active_tasks) >= max_tasks * 0.8  # 80% of max capacity
+        )

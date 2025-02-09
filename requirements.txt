@@ -1,101 +1,59 @@
 # Core Dependencies
-python-dotenv
-rich
-pydantic
-PyYAML
-aiohttp
-asyncio
+python-dotenv>=1.0.0
+rich>=13.5.0
+pydantic>=2.0.0
+PyYAML>=6.0.1
+aiohttp>=3.8.5
+asyncio>=3.4.3
+certifi>=2023.7.22
 
 # AI and Machine Learning
-langchain
-langchain-openai
-openai
-torch
-numpy
-scikit-learn
-transformers
-
-# Audio Processing
-librosa
-soundfile
-pydub
-audio-effects
-
-# Image Processing
-Pillow
-opencv-python
-scikit-image
-moviepy
+langchain>=0.0.300
+langchain-openai>=0.0.2
+openai>=1.3.0
+anthropic>=0.5.0
+transformers>=4.30.2
+torch>=2.0.1
+numpy>=1.24.3
+scikit-learn>=1.3.0
 
 # Document Processing
-python-docx
-python-pptx
-reportlab
-pypdf2
+python-docx>=0.8.11
+python-pptx>=0.6.21
+reportlab>=4.0.4
+PyPDF2>=3.0.1
 
 # Data Processing and Analysis
-pandas
-matplotlib
-seaborn
-plotly
-jupyter
-
-# Web and API
-fastapi
-uvicorn
-requests
-websockets
-httpx
-
-# Database
-sqlalchemy
-psycopg2-binary
-pymongo
-redis
-
-# Testing
-pytest
-pytest-asyncio
-pytest-cov
-faker
+pandas>=2.0.3
+matplotlib>=3.7.2
+seaborn>=0.12.2
 
 # Security
-cryptography
-python-jose
-passlib
-bcrypt
+cryptography>=41.0.3
+python-jose>=3.3.0
+passlib>=1.7.4
+bcrypt>=4.0.1
 
 # Monitoring and Logging
-prometheus-client
-grafana-api
-elastic-apm
-sentry-sdk
+prometheus-client>=0.17.1
+grafana-api>=1.0.3
 
 # Development Tools
-black
-flake8
-mypy
-isort
+black>=23.7.0
+flake8>=6.1.0
+mypy>=1.5.1
+isort>=5.12.0
 
 # Documentation
-sphinx
-mkdocs
-pdoc3
+sphinx>=7.1.2
+mkdocs>=1.5.2
 
-# Cloud Services
-boto3
-google-cloud-storage
-azure-storage-blob
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.1
+pytest-cov>=4.1.0
+faker>=19.3.0
 
-# Misc Utilities
-tqdm
-python-dateutil
-pytz
-colorama
-pyinstaller
-
-# Optional but Recommended
-jupyter-black
-pre-commit
-docker
-kubernetes
+# Optional Dependencies
+jupyter>=1.0.0
+pre-commit>=3.3.3

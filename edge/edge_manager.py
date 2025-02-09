@@ -1,111 +1,82 @@
-# edge/edge_manager.py
-
 import logging
 import asyncio
 from typing import Dict, Any, List, Optional, Set
 from datetime import datetime
+import uuid
 import aiohttp
-import numpy as np
-from pathlib import Path
+from pydantic import BaseModel, Field
+
+from core.interfaces import ResourceUsage, PerformanceMetrics
+from core.errors import ProcessingError, handle_errors
 
 logger = logging.getLogger(__name__)
 
-class EdgeNode:
-    """Representa un nodo de procesamiento edge."""
-    
-    def __init__(
-        self,
-        node_id: str,
-        capabilities: List[str],
-        resources: Dict[str, Any]
-    ):
-        self.node_id = node_id
-        self.capabilities = set(capabilities)
-        self.resources = resources
-        self.status = "ready"
-        self.load = 0.0
-        self.last_heartbeat = datetime.now()
-        self.metrics: Dict[str, Any] = {
-            "processed_tasks": 0,
-            "errors": 0,
-            "average_latency": 0.0
-        }
+class EdgeNode(BaseModel):
+    """Node representation."""
+    node_id: str
+    capabilities: Set[str]
+    resources: ResourceUsage
+    status: str = "ready"
+    load: float = 0.0
+    last_heartbeat: datetime = Field(default_factory=datetime.now)
+    metrics: PerformanceMetrics = Field(default_factory=PerformanceMetrics)
 
 class EdgeManager:
     """
-    Gestiona el procesamiento distribuido en nodos edge.
+    Edge computing node management.
     
-    Características:
-    - Descubrimiento automático de nodos
-    - Balanceo de carga
-    - Tolerancia a fallos
-    - Optimización de latencia
+    Features:
+    - Auto node discovery
+    - Load balancing
+    - Fault tolerance
+    - Latency optimization
     """
     
     def __init__(self):
+        # Active nodes
         self.nodes: Dict[str, EdgeNode] = {}
-        self.active_tasks: Dict[str, Dict[str, Any]] = {}
+        
+        # Node groups by capability
         self.node_groups: Dict[str, Set[str]] = {}
         
-        # Métricas y estado
-        self.metrics = {
-            "total_nodes": 0,
-            "active_tasks": 0,
-            "total_processed": 0,
-            "average_latency": 0.0
-        }
+        # Task tracking
+        self.active_tasks: Dict[str, Dict[str, Any]] = {}
         
-        # Configuración
-        self._load_config()
+        # System metrics
+        self.performance_metrics = PerformanceMetrics()
         
-        # Iniciar monitoreo
-        asyncio.create_task(self._monitor_nodes())
+        # Start monitoring
+        self._start_monitoring()
 
-    def _load_config(self) -> None:
-        """Carga configuración del sistema edge."""
-        try:
-            config_path = Path(__file__).parent / "edge_config.yaml"
-            if not config_path.exists():
-                return
-            
-            with open(config_path) as f:
-                self.config = yaml.safe_load(f)
-                
-        except Exception as e:
-            logger.error(f"Error loading edge config: {e}")
-            self.config = {}
-
+    @handle_errors()
     async def register_node(
         self,
         node_id: str,
         capabilities: List[str],
         resources: Dict[str, Any]
     ) -> bool:
-        """
-        Registra un nuevo nodo edge.
-        
-        Args:
-            node_id: Identificador único del nodo
-            capabilities: Lista de capacidades del nodo
-            resources: Recursos disponibles
-        """
+        """Register a new edge node."""
         try:
-            # Validar nodo
+            # Validate node
             if not await self._validate_node(node_id, capabilities, resources):
                 return False
             
-            # Crear nodo
-            node = EdgeNode(node_id, capabilities, resources)
+            # Create node
+            node = EdgeNode(
+                node_id=node_id,
+                capabilities=set(capabilities),
+                resources=ResourceUsage(**resources)
+            )
             self.nodes[node_id] = node
             
-            # Actualizar grupos
+            # Update groups
             for capability in capabilities:
                 if capability not in self.node_groups:
                     self.node_groups[capability] = set()
                 self.node_groups[capability].add(node_id)
             
-            # Actualizar métricas
-            self.metrics["total_nodes"] += 1
+            # Update metrics
+            self.performance_metrics.total_requests += 1
             
             logger.info(f"Registered new edge node: {node_id}")
             return True
@@ -119,21 +90,15 @@ class EdgeManager:
         task: Dict[str, Any],
         required_capabilities: List[str]
     ) -> Dict[str, Any]:
-        """
-        Envía una tarea para procesamiento edge.
-        
-        Args:
-            task: Tarea a procesar
-            required_capabilities: Capacidades requeridas
-        """
+        """Submit task for edge processing."""
         try:
-            # Seleccionar nodo óptimo
+            # Select optimal node
             node = await self._select_optimal_node(required_capabilities)
             if not node:
                 raise ValueError("No suitable node found")
             
-            # Preparar tarea
-            task_id = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+            # Prepare task
+            task_id = str(uuid.uuid4())
             prepared_task = {
                 "id": task_id,
                 "content": task,
@@ -141,17 +106,17 @@ class EdgeManager:
                 "submitted_at": datetime.now().isoformat()
             }
             
-            # Registrar tarea
+            # Register task
             self.active_tasks[task_id] = {
                 "task": prepared_task,
                 "node_id": node.node_id,
                 "status": "submitted"
             }
             
-            # Enviar tarea al nodo
+            # Send task to node
             result = await self._send_task_to_node(node, prepared_task)
             
-            # Actualizar métricas
+            # Update metrics
             self._update_metrics(node, result)
             
             return result
@@ -161,12 +126,7 @@ class EdgeManager:
             raise
 
     async def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """
-        Obtiene el estado de una tarea.
-        
-        Args:
-            task_id: ID de la tarea
-        """
+        """Get status of a task."""
         try:
             if task_id not in self.active_tasks:
                 return {"error": "Task not found"}
@@ -177,7 +137,7 @@ class EdgeManager:
             if not node:
                 return {"error": "Processing node not found"}
             
-            # Obtener estado actualizado del nodo
+            # Get updated status from node
             status = await self._get_node_task_status(node, task_id)
             
             return {
@@ -198,20 +158,20 @@ class EdgeManager:
         capabilities: List[str],
         resources: Dict[str, Any]
     ) -> bool:
-        """Valida un nodo antes de registrarlo."""
+        """Validate a node before registration."""
         try:
-            # Verificar requisitos mínimos
-            required_capabilities = self.config.get("required_capabilities", [])
-            if not all(cap in capabilities for cap in required_capabilities):
-                return False
+            # Verify minimum resources
+            min_resources = {
+                "cpu_percent": 10,
+                "memory_percent": 10,
+                "disk_percent": 10
+            }
             
-            # Verificar recursos mínimos
-            min_resources = self.config.get("minimum_resources", {})
             for resource, min_value in min_resources.items():
                 if resource not in resources or resources[resource] < min_value:
                     return False
             
-            # Verificar conectividad
+            # Verify connectivity
             return await self._check_node_connectivity(node_id)
             
         except Exception as e:
@@ -222,14 +182,14 @@ class EdgeManager:
         self,
         required_capabilities: List[str]
     ) -> Optional[EdgeNode]:
-        """Selecciona el nodo óptimo para una tarea."""
+        """Select the optimal node for a task."""
         try:
             eligible_nodes = []
             
-            # Filtrar nodos por capacidades
+            # Filter nodes by capabilities
             for node in self.nodes.values():
                 if node.status == "ready" and all(
-                    cap in node.capabilities
+                    cap in node.capabilities 
                     for cap in required_capabilities
                 ):
                     eligible_nodes.append(node)
@@ -237,13 +197,13 @@ class EdgeManager:
             if not eligible_nodes:
                 return None
             
-            # Calcular score para cada nodo
+            # Calculate score for each node
             node_scores = []
             for node in eligible_nodes:
                 score = self._calculate_node_score(node)
                 node_scores.append((score, node))
             
-            # Seleccionar mejor nodo
+            # Select best node
             return max(node_scores, key=lambda x: x[0])[1]
             
         except Exception as e:
@@ -251,21 +211,21 @@ class EdgeManager:
             return None
 
     def _calculate_node_score(self, node: EdgeNode) -> float:
-        """Calcula un score de optimización para un nodo."""
+        """Calculate optimization score for a node."""
         try:
-            # Factores de score
+            # Score factors
             load_factor = 1 - node.load
-            error_factor = 1 / (node.metrics["errors"] + 1)
-            latency_factor = 1 / (node.metrics["average_latency"] + 1)
+            error_factor = 1 / (node.metrics.failed_requests + 1)
+            latency_factor = 1 / (node.metrics.average_response_time + 1)
             
-            # Pesos
+            # Weights
             weights = {
                 "load": 0.4,
                 "errors": 0.3,
                 "latency": 0.3
             }
             
-            # Calcular score final
+            # Calculate final score
             score = (
                 weights["load"] * load_factor +
                 weights["errors"] * error_factor +
@@ -283,13 +243,13 @@ class EdgeManager:
         node: EdgeNode,
         task: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Envía una tarea a un nodo específico."""
+        """Send a task to a specific node."""
         try:
-            # Simular envío (reemplazar con implementación real)
+            # Simulate node communication
             await asyncio.sleep(0.1)
             
             node.load += 0.1
-            node.metrics["processed_tasks"] += 1
+            node.metrics.total_requests += 1
             
             return {
                 "status": "success",
@@ -301,248 +261,190 @@ class EdgeManager:
             logger.error(f"Error sending task to node: {e}")
             raise
 
+    async def _get_node_task_status(
+        self,
+        node: EdgeNode,
+        task_id: str
+    ) -> Dict[str, Any]:
+        """Get task status from a node."""
+        try:
+            # Simulate status check
+            await asyncio.sleep(0.1)
+            
+            return {
+                "status": "completed",
+                "task_id": task_id,
+                "node_id": node.node_id
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting task status: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def _update_metrics(
+        self,
+        node: EdgeNode,
+        result: Dict[str, Any]
+    ) -> None:
+        """Update performance metrics."""
+        try:
+            self.performance_metrics.total_requests += 1
+            
+            if result.get("status") == "success":
+                self.performance_metrics.successful_requests += 1
+            else:
+                self.performance_metrics.failed_requests += 1
+                
+        except Exception as e:
+            logger.error(f"Error updating metrics: {e}")
+
+    def _start_monitoring(self) -> None:
+        """Start monitoring tasks."""
+        asyncio.create_task(self._monitor_nodes())
+        asyncio.create_task(self._monitor_tasks())
+
     async def _monitor_nodes(self) -> None:
-        """Monitorea el estado de los nodos."""
+        """Monitor node health."""
         while True:
             try:
-                for node_id, node in list(self.nodes.items()):
-                    # Verificar último heartbeat
-                    if (datetime.now() - node.last_heartbeat).seconds > 60:
-                        await self._handle_node_failure(node_id)
-                    
-                    # Actualizar métricas
-                    await self._update_node_metrics(node)
+                now = datetime.now()
                 
+                # Check node heartbeats
+                for node_id, node in list(self.nodes.items()):
+                    if (now - node.last_heartbeat).total_seconds() > 60:
+                        await self._handle_node_failure(node_id)
+                        
                 await asyncio.sleep(10)
                 
             except Exception as e:
                 logger.error(f"Error monitoring nodes: {e}")
                 await asyncio.sleep(10)
 
+    async def _monitor_tasks(self) -> None:
+        """Monitor task status."""
+        while True:
+            try:
+                # Update task status
+                for task_id, task_info in list(self.active_tasks.items()):
+                    node = self.nodes.get(task_info["node_id"])
+                    if node:
+                        status = await self._get_node_task_status(node, task_id)
+                        task_info["status"] = status["status"]
+                        
+                await asyncio.sleep(5)
+                
+            except Exception as e:
+                logger.error(f"Error monitoring tasks: {e}")
+                await asyncio.sleep(5)
+
     async def _handle_node_failure(self, node_id: str) -> None:
-        """Maneja el fallo de un nodo."""
+        """Handle node failure."""
         try:
             logger.warning(f"Node failure detected: {node_id}")
             
-            # Recuperar tareas activas
+            # Get affected tasks
             affected_tasks = [
                 task_id for task_id, task in self.active_tasks.items()
                 if task["node_id"] == node_id
             ]
             
-            # Reasignar tareas
+            # Reassign tasks
             for task_id in affected_tasks:
                 await self._reassign_task(task_id)
             
-            # Eliminar nodo
+            # Remove node
             if node_id in self.nodes:
                 node = self.nodes[node_id]
-                # Limpiar grupos
+                # Clean up node groups
                 for capability in node.capabilities:
                     if capability in self.node_groups:
                         self.node_groups[capability].discard(node_id)
                 del self.nodes[node_id]
             
-            self.metrics["total_nodes"] -= 1
+            self.performance_metrics.total_nodes -= 1
             
         except Exception as e:
             logger.error(f"Error handling node failure: {e}")
 
     async def _reassign_task(self, task_id: str) -> None:
-        """
-        Reasigna una tarea a un nuevo nodo cuando el nodo original falla.
-        
-        Args:
-            task_id: ID de la tarea a reasignar
-        """
+        """Reassign a task to a new node."""
         try:
             if task_id not in self.active_tasks:
                 return
                 
             task_info = self.active_tasks[task_id]
-            original_node_id = task_info["node_id"]
+            task = task_info["task"]
             
-            # Obtener capacidades requeridas
-            required_capabilities = task_info["task"]["required_capabilities"]
-            
-            # Seleccionar nuevo nodo
-            new_node = await self._select_optimal_node(required_capabilities)
+            # Select new node
+            new_node = await self._select_optimal_node(task["required_capabilities"])
             if not new_node:
                 logger.error(f"No alternative node found for task {task_id}")
                 task_info["status"] = "failed"
                 return
                 
-            # Actualizar registro de tarea
+            # Update task info
             task_info["node_id"] = new_node.node_id
             task_info["reassigned_at"] = datetime.now().isoformat()
-            task_info["previous_node"] = original_node_id
             
-            # Reenviar tarea
-            logger.info(f"Reassigning task {task_id} from {original_node_id} to {new_node.node_id}")
-            await self._send_task_to_node(new_node, task_info["task"])
+            # Resend task
+            logger.info(f"Reassigning task {task_id} to node {new_node.node_id}")
+            await self._send_task_to_node(new_node, task)
             
         except Exception as e:
             logger.error(f"Error reassigning task {task_id}: {e}")
             if task_id in self.active_tasks:
                 self.active_tasks[task_id]["status"] = "failed"
 
-    async def _update_node_metrics(self, node: EdgeNode) -> None:
-        """
-        Actualiza métricas de un nodo.
-        
-        Args:
-            node: Nodo a actualizar
-        """
-        try:
-            # Simular obtención de métricas (reemplazar con implementación real)
-            node.load = max(0.0, min(1.0, node.load - 0.1))  # Decay simulado
-            
-            # Actualizar promedio de latencia
-            if node.metrics["processed_tasks"] > 0:
-                node.metrics["average_latency"] = (
-                    node.metrics["average_latency"] * 0.9 +  # Peso histórico
-                    random.uniform(0.1, 0.5) * 0.1  # Nueva muestra simulada
-                )
-            
-            # Verificar salud del nodo
-            if node.load > 0.9 or node.metrics["errors"] > 100:
-                await self._handle_unhealthy_node(node)
-                
-        except Exception as e:
-            logger.error(f"Error updating metrics for node {node.node_id}: {e}")
-
-    async def _handle_unhealthy_node(self, node: EdgeNode) -> None:
-        """
-        Maneja un nodo en estado poco saludable.
-        
-        Args:
-            node: Nodo a manejar
-        """
-        try:
-            logger.warning(f"Unhealthy node detected: {node.node_id}")
-            
-            # Cambiar estado
-            node.status = "degraded"
-            
-            # Reducir carga
-            current_tasks = [
-                task_id for task_id, task in self.active_tasks.items()
-                if task["node_id"] == node.node_id
-            ]
-            
-            # Reasignar tareas no críticas
-            for task_id in current_tasks:
-                task_info = self.active_tasks[task_id]
-                if not task_info.get("critical", False):
-                    await self._reassign_task(task_id)
-            
-            # Programar health check
-            asyncio.create_task(self._schedule_health_check(node))
-            
-        except Exception as e:
-            logger.error(f"Error handling unhealthy node {node.node_id}: {e}")
-
-    async def _schedule_health_check(self, node: EdgeNode) -> None:
-        """
-        Programa una verificación de salud para un nodo.
-        
-        Args:
-            node: Nodo a verificar
-        """
-        try:
-            await asyncio.sleep(300)  # Esperar 5 minutos
-            
-            # Verificar métricas actuales
-            if node.load < 0.7 and node.metrics["errors"] < 50:
-                node.status = "ready"
-                logger.info(f"Node {node.node_id} recovered")
-            else:
-                # Mantener en estado degradado
-                asyncio.create_task(self._schedule_health_check(node))
-                
-        except Exception as e:
-            logger.error(f"Error in health check for node {node.node_id}: {e}")
-
-    async def get_metrics(self) -> Dict[str, Any]:
-        """Obtiene métricas globales del sistema edge."""
-        try:
-            return {
-                "nodes": {
-                    "total": self.metrics["total_nodes"],
-                    "ready": len([n for n in self.nodes.values() if n.status == "ready"]),
-                    "degraded": len([n for n in self.nodes.values() if n.status == "degraded"])
-                },
-                "tasks": {
-                    "active": len(self.active_tasks),
-                    "total_processed": self.metrics["total_processed"],
-                    "average_latency": self.metrics["average_latency"]
-                },
-                "capabilities": {
-                    cap: len(nodes) for cap, nodes in self.node_groups.items()
-                }
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting metrics: {e}")
-            return {}
-
     async def cleanup(self) -> None:
-        """Limpia recursos y finaliza procesamiento."""
+        """Clean up resources."""
         try:
-            # Cancelar tareas activas
-            for task_id, task_info in self.active_tasks.items():
-                node = self.nodes.get(task_info["node_id"])
-                if node:
-                    await self._cancel_task(node, task_id)
-            
-            # Limpiar estructuras de datos
+            # Clear data structures
             self.nodes.clear()
-            self.active_tasks.clear()
             self.node_groups.clear()
+            self.active_tasks.clear()
+            
+            # Reset metrics
+            self.performance_metrics = PerformanceMetrics()
             
             logger.info("Edge Manager cleanup completed")
             
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
 
-    async def _cancel_task(self, node: EdgeNode, task_id: str) -> None:
-        """
-        Cancela una tarea en un nodo.
-        
-        Args:
-            node: Nodo que ejecuta la tarea
-            task_id: ID de la tarea a cancelar
-        """
-        try:
-            # Implementar cancelación real aquí
-            await asyncio.sleep(0.1)  # Simular delay de red
-            
-            # Actualizar estado
-            if task_id in self.active_tasks:
-                self.active_tasks[task_id]["status"] = "cancelled"
-            
-            # Actualizar métricas del nodo
-            node.load = max(0.0, node.load - 0.1)
-            
-        except Exception as e:
-            logger.error(f"Error cancelling task {task_id} on node {node.node_id}: {e}")
-
     async def get_status(self) -> Dict[str, Any]:
-        """Obtiene el estado actual del sistema edge."""
+        """Get current system status."""
         return {
             "nodes": {
-                node_id: {
-                    "status": node.status,
-                    "load": node.load,
-                    "capabilities": list(node.capabilities),
-                    "metrics": node.metrics
-                }
-                for node_id, node in self.nodes.items()
+                "total": len(self.nodes),
+                "active": len([n for n in self.nodes.values() if n.status == "ready"])
             },
-            "active_tasks": len(self.active_tasks),
-            "node_groups": {
-                cap: list(nodes)
-                for cap, nodes in self.node_groups.items()
+            "tasks": {
+                "active": len(self.active_tasks),
+                "completed": self.performance_metrics.successful_requests,
+                "failed": self.performance_metrics.failed_requests
             },
-            "metrics": await self.get_metrics()
+            "metrics": self.performance_metrics.dict()
         }
+
+    async def get_health_status(self) -> Dict[str, Any]:
+        """Get health status of the system."""
+        try:
+            total_nodes = len(self.nodes)
+            active_nodes = len([n for n in self.nodes.values() if n.status == "ready"])
+            
+            return {
+                "status": "healthy" if active_nodes/total_nodes >= 0.7 else "degraded",
+                "nodes": {
+                    "total": total_nodes,
+                    "active": active_nodes,
+                    "failed": total_nodes - active_nodes
+                },
+                "tasks": {
+                    "active": len(self.active_tasks),
+                    "completed": self.performance_metrics.successful_requests,
+                    "failed": self.performance_metrics.failed_requests
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting health status: {e}")
+            return {"status": "error", "message": str(e)}

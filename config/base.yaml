@@ -6,10 +6,17 @@ api:
     top_p: 1.0
     frequency_penalty: 0.0
     presence_penalty: 0.0
+    timeout: 30
   deepseek:
     model: deepseek-chat
     temperature: 0.7
     max_tokens: 4000
+    timeout: 30
+  anthropic:
+    model: claude-3-opus
+    temperature: 0.7
+    max_tokens: 4000
+    timeout: 30
 
 agent_roles:
   research:
@@ -43,13 +50,127 @@ performance:
     max_attempts: 3
     delay_base: 2
     max_delay: 30
+  cache:
+    max_memory_items: 1000
+    max_disk_items: 10000
+    expiration_hours: 24
+  resource_limits:
+    max_cpu_percent: 80
+    max_memory_percent: 80
+    max_disk_percent: 90
 
 monitoring:
   enabled: true
   metrics_interval: 60
   log_level: INFO
+  alerts:
+    slack_webhook: ""
+    email: ""
+    thresholds:
+      error_rate: 0.1
+      response_time: 5.0
+      cpu_usage: 80
+      memory_usage: 80
+  prometheus:
+    enabled: true
+    port: 9090
+  grafana:
+    enabled: true
+    port: 3000
 
 security:
   max_requests: 100
   rate_limit: 60/minute
   allowed_ips: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+  authentication:
+    enabled: true
+    jwt_secret: ""
+    token_expiration: 3600
+  encryption:
+    algorithm: AES-256
+    key_rotation: 86400
+
+plugins:
+  enabled: true
+  auto_reload: true
+  allowed_sources: [local, verified]
+  default_timeout: 30
+
+edge:
+  enabled: true
+  auto_discovery: true
+  min_nodes: 1
+  max_nodes: 10
+  health_check_interval: 30
+
+blockchain:
+  enabled: true
+  network: ethereum
+  provider_url: ""
+  retry_attempts: 3
+  confirmation_blocks: 2
+
+templates:
+  powerpoint:
+    themes:
+      professional:
+        colors:
+          primary: ["#2C3E50", "#E74C3C", "#3498DB"]
+          secondary: ["#ECF0F1", "#95A5A6", "#BDC3C7"]
+        fonts:
+          title: "Calibri"
+          heading: "Calibri"
+          body: "Calibri"
+      modern:
+        colors:
+          primary: ["#1A237E", "#311B92", "#4527A0"]
+          secondary: ["#FAFAFA", "#F5F5F5", "#EEEEEE"]
+        fonts:
+          title: "Helvetica"
+          heading: "Helvetica"
+          body: "Helvetica"
+  document:
+    styles:
+      professional:
+        fonts:
+          title: "Times New Roman"
+          heading1: "Times New Roman"
+          heading2: "Times New Roman"
+          body: "Times New Roman"
+        margins:
+          top: 2.54
+          bottom: 2.54
+          left: 2.54
+          right: 2.54
+      modern:
+        fonts:
+          title: "Arial"
+          heading1: "Arial"
+          heading2: "Arial"
+          body: "Arial"
+        margins:
+          top: 2.0
+          bottom: 2.0
+          left: 2.0
+          right: 2.0
+
+storage:
+  type: distributed
+  backends:
+    - s3:
+        bucket: "vyper-ai-storage"
+        region: "us-west-1"
+    - local:
+        path: "/data/vyper-ai"
+        max_size: "100Gi"
+
+teams:
+  max_size: 5
+  max_tasks_per_team: 10
+  task_timeout: 300
+  auto_scaling:
+    enabled: true
+    min_teams: 1
+    max_teams: 10
+    scale_up_threshold: 0.8
+    scale_down_threshold: 0.2

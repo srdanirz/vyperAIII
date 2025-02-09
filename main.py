@@ -17,19 +17,18 @@ from rich.text import Text
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.traceback import install as install_rich_traceback
 
-from core.managers.team_manager import DynamicTeamManager
+from core.orchestrator import CoreOrchestrator
 from config.config import initialize_config, get_config
 
-# Configuración de Rich para mejor visualización de errores
+# Configure Rich for better error visualization
 install_rich_traceback(show_locals=True, word_wrap=True)
 
-# Configuración de logging
 def setup_logging(log_dir: Path) -> None:
-    """Configura el sistema de logging con rotación de archivos y formato enriquecido."""
+    """Configure logging system with file rotation and rich formatting."""
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"vyper_{datetime.now().strftime('%Y%m%d')}.log"
 
-    # Handler para archivos con rotación
+    # Handler for rotating files
     file_handler = logging.handlers.RotatingFileHandler(
         log_file,
         maxBytes=10*1024*1024,  # 10MB
@@ -40,14 +39,14 @@ def setup_logging(log_dir: Path) -> None:
         '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
     ))
 
-    # Handler para consola con Rich
+    # Console handler with Rich
     console_handler = RichHandler(
         rich_tracebacks=True,
         tracebacks_show_locals=True,
         show_time=True
     )
 
-    # Configuración root logger
+    # Configure root logger
     logging.basicConfig(
         level=logging.INFO,
         format="%(message)s",
@@ -55,19 +54,19 @@ def setup_logging(log_dir: Path) -> None:
         handlers=[file_handler, console_handler]
     )
 
-# Inicialización de Rich console
+# Initialize Rich console
 console = Console()
 
 class VyperCLI:
-    """Gestiona la interfaz de línea de comandos de Vyper."""
+    """Manages Vyper's command line interface."""
     
     def __init__(self):
         self.logger = logging.getLogger("vyper.cli")
         self.console = Console()
-        self.team_manager: Optional[DynamicTeamManager] = None
+        self.orchestrator: Optional[CoreOrchestrator] = None
 
     def clean_markdown(self, text: str) -> str:
-        """Limpia y formatea texto markdown."""
+        """Clean and format markdown text."""
         if not isinstance(text, str):
             return str(text)
         
@@ -83,37 +82,37 @@ class VyperCLI:
         return '\n'.join(lines).strip()
 
     def format_result(self, result: dict) -> str:
-        """Formatea el resultado para visualización."""
+        """Format result for visualization."""
         try:
             if 'error' in result:
                 return f"❌ Error: {result['error'].get('message', str(result['error']))}"
             
             if 'result' not in result:
-                return "❌ No se obtuvo un resultado válido"
+                return "❌ No valid result obtained"
 
             formatted_content = []
             if 'team_analysis' in result:
                 formatted_content.append(self.clean_markdown(result['team_analysis']))
                 
             if 'execution_results' in result:
-                formatted_content.append("\n📊 Resultados de ejecución:")
+                formatted_content.append("\n📊 Execution Results:")
                 for team_id, team_result in result['execution_results'].items():
-                    formatted_content.append(f"\nEquipo {team_id}:")
+                    formatted_content.append(f"\nTeam {team_id}:")
                     formatted_content.append(self.clean_markdown(str(team_result)))
             
-            return "\n\n".join(formatted_content) if formatted_content else "No se encontró contenido en la respuesta"
+            return "\n\n".join(formatted_content) if formatted_content else "No content found in response"
             
         except Exception as e:
-            self.logger.error(f"Error formateando resultado: {e}", exc_info=True)
-            return f"❌ Error al formatear el resultado: {str(e)}"
+            self.logger.error(f"Error formatting result: {e}", exc_info=True)
+            return f"❌ Error formatting result: {str(e)}"
 
     @contextmanager
     def error_boundary(self, error_message: str):
-        """Context manager para manejo consistente de errores."""
+        """Context manager for consistent error handling."""
         try:
             yield
         except KeyboardInterrupt:
-            self.console.print("\n[yellow]Proceso interrumpido por el usuario[/yellow]")
+            self.console.print("\n[yellow]Process interrupted by user[/yellow]")
             sys.exit(1)
         except Exception as e:
             self.logger.exception(error_message)
@@ -125,13 +124,13 @@ class VyperCLI:
             sys.exit(1)
 
     async def initialize_output_dirs(self) -> None:
-        """Inicializa directorios necesarios."""
+        """Initialize necessary directories."""
         output_dirs = ['output', 'output/teams', 'output/results', 'logs', 'temp']
         for dir_path in output_dirs:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
 
     async def process_request(self, mode: str, prompt: str, api_key: str) -> None:
-        """Procesa una solicitud del usuario."""
+        """Process a user request."""
         try:
             await self.initialize_output_dirs()
             
@@ -142,11 +141,15 @@ class VyperCLI:
                 TaskProgressColumn(),
                 console=self.console
             ) as progress:
-                main_task = progress.add_task("⏳ Procesando solicitud...", total=100)
+                main_task = progress.add_task("⏳ Processing request...", total=100)
                 
-                # Inicializar y ejecutar team manager
-                self.team_manager = DynamicTeamManager(api_key, mode)
-                result = await self.team_manager.process_request({"prompt": prompt})
+                # Initialize and execute orchestrator
+                self.orchestrator = CoreOrchestrator(api_key, mode)
+                result = await self.orchestrator.process_request({
+                    "type": "general",
+                    "content": prompt,
+                    "metadata": {}
+                })
                 
                 if "error" in result:
                     progress.update(main_task, completed=100, description="❌ Error")
@@ -157,10 +160,10 @@ class VyperCLI:
                     ))
                     return
                 
-                progress.update(main_task, completed=100, description="✅ Completado")
+                progress.update(main_task, completed=100, description="✅ Completed")
                 formatted_result = self.format_result(result)
                 
-                self.console.print("\n[bold green]🎯 Resultado:[/bold green]")
+                self.console.print("\n[bold green]🎯 Result:[/bold green]")
                 self.console.print(Panel(
                     Markdown(formatted_result),
                     border_style="green",
@@ -169,58 +172,58 @@ class VyperCLI:
                 
         finally:
             # Cleanup
-            if self.team_manager:
-                await self.team_manager.cleanup()
+            if self.orchestrator:
+                await self.orchestrator.cleanup()
 
     def run(self) -> None:
-        """Punto de entrada principal del CLI."""
-        with self.error_boundary("Error inicializando la aplicación"):
-            # Cargar configuración
+        """Main CLI entry point."""
+        with self.error_boundary("Error initializing application"):
+            # Load configuration
             load_dotenv()
             initialize_config(env="development")
             
-            # Verificar argumentos
+            # Check arguments
             if len(sys.argv) < 3:
                 self.console.print(Panel(
-                    "[yellow]Uso: python main.py (openai|deepseek) \"Tu petición\"[/yellow]\n\n"
-                    "Ejemplos:\n"
-                    "  python main.py openai \"Crea un documento sobre IA\"\n"
-                    "  python main.py deepseek \"Analiza datos de CSV\"\n",
-                    title="Uso del Asistente",
+                    "[yellow]Usage: python main.py (openai|deepseek) \"Your request\"[/yellow]\n\n"
+                    "Examples:\n"
+                    "  python main.py openai \"Create a document about AI\"\n"
+                    "  python main.py deepseek \"Analyze CSV data\"\n",
+                    title="Assistant Usage",
                     border_style="blue"
                 ))
                 sys.exit(1)
 
-            # Obtener parámetros
+            # Get parameters
             mode = sys.argv[1].lower()
             prompt = " ".join(sys.argv[2:])
             api_key = os.getenv(f"{mode.upper()}_API_KEY")
 
             if not api_key:
-                self.console.print(f"[red]Error: no se encontró {mode.upper()}_API_KEY en .env[/red]")
+                self.console.print(f"[red]Error: {mode.upper()}_API_KEY not found in .env[/red]")
                 sys.exit(1)
 
-            # Configurar logging
+            # Configure logging
             setup_logging(Path("logs"))
 
-            # Mostrar banner
+            # Show banner
             self.console.print(Panel(
                 Text("🤖 AI Assistant", justify="center", style="bold blue"),
-                subtitle=f"Modo: {mode.upper()}",
+                subtitle=f"Mode: {mode.upper()}",
                 border_style="blue"
             ))
             
             self.console.print(Panel(
                 Text(prompt, justify="left"),
-                title="📝 Petición",
+                title="📝 Request",
                 border_style="green"
             ))
 
-            # Ejecutar procesamiento
+            # Execute processing
             asyncio.run(self.process_request(mode, prompt, api_key))
 
 def main():
-    """Función principal."""
+    """Main function."""
     cli = VyperCLI()
     cli.run()
 

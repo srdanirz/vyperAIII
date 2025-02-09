@@ -1,12 +1,13 @@
+from typing import Optional
 from .base import BaseLLM
 from .openai import OpenAIChat
-from .deepseek import core.llm
+from .deepseek import DeepSeekChat
 
-__all__ = ['BaseLLM', 'OpenAIChat', 'core.llm']
-
-def get_llm(engine_mode: str, api_key: str, model: str = None, **kwargs):
+def get_llm(engine_mode: str, api_key: str, model: Optional[str] = None, **kwargs):
     """Factory function to get LLM instance."""
     if engine_mode.lower() == "deepseek":
-        return core.llm(api_key=api_key, model=model or "deepseek-chat", **kwargs)
+        return DeepSeekChat(api_key=api_key, model=model or "deepseek-chat", **kwargs)
     else:
         return OpenAIChat(api_key=api_key, model=model or "gpt-4-turbo", **kwargs)
+
+__all__ = ['BaseLLM', 'OpenAIChat', 'DeepSeekChat', 'get_llm']
