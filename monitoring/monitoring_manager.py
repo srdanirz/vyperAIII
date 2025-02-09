@@ -1,6 +1,9 @@
 import logging
 import asyncio
-from typing import Dict, Any, List, Optional
+import os
+import psutil
+import json
+from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 import aiohttp
 from prometheus_client import (
@@ -9,7 +12,7 @@ from prometheus_client import (
 )
 
 from core.interfaces import ResourceUsage, PerformanceMetrics
-from core.errors import ProcessingError, handle_errors
+from core.errors import ProcessingError, handle_errors, ErrorBoundary
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,9 @@ class MonitoringManager:
         # Estado y alertas
         self.active_alerts: Dict[str, Dict[str, Any]] = {}
         self.alert_history: List[Dict[str, Any]] = []
+        
+        # Tareas de monitoreo
+        self._monitoring_tasks: List[asyncio.Task] = []
 
     def _setup_metrics(self) -> None:
         """Configura métricas Prometheus."""
@@ -100,6 +106,9 @@ class MonitoringManager:
                 registry=self.registry
             )
         }
+        
+        # Iniciar monitoreo periódico
+        self._start_monitoring()
 
     @handle_errors()
     async def record_metric(
@@ -121,19 +130,23 @@ class MonitoringManager:
             logger.warning(f"Unknown metric: {metric_name}")
             return
 
-        # Registrar valor
-        if labels:
-            metric.labels(**labels).observe(value)
-        else:
-            metric.observe(value)
+        try:
+            # Registrar valor
+            if labels:
+                metric.labels(**labels).observe(value)
+            else:
+                metric.observe(value)
 
-        # Actualizar caché
-        if metric_name not in self.metrics_cache:
-            self.metrics_cache[metric_name] = []
-        self.metrics_cache[metric_name].append(value)
+            # Actualizar caché
+            if metric_name not in self.metrics_cache:
+                self.metrics_cache[metric_name] = []
+            self.metrics_cache[metric_name].append(value)
 
-        # Verificar alertas
-        await self._check_alerts(metric_name, value, labels)
+            # Verificar alertas
+            await self._check_alerts(metric_name, value, labels)
+            
+        except Exception as e:
+            logger.error(f"Error recording metric {metric_name}: {e}")
 
     async def _check_alerts(
         self,
@@ -165,7 +178,7 @@ class MonitoringManager:
                             "labels": labels
                         }
                     )
-
+            
         except Exception as e:
             logger.error(f"Error checking alerts: {e}")
 
@@ -201,7 +214,7 @@ class MonitoringManager:
                 await self._send_email_alert(alert, email_config)
 
             logger.warning(f"Alert triggered: {title}")
-
+            
         except Exception as e:
             logger.error(f"Error sending alert: {e}")
 
@@ -225,14 +238,47 @@ class MonitoringManager:
         except Exception as e:
             logger.error(f"Error sending Slack alert: {e}")
 
-    async def _send_email_alert(
-        self,
-        alert: Dict[str, Any],
-        email_config: str
-    ) -> None:
-        """Envía alerta por email."""
-        # Implementar envío de email aquí
-        logger.info(f"Would send email alert to {email_config}")
+    def _start_monitoring(self) -> None:
+        """Inicia tareas de monitoreo periódico."""
+        self._monitoring_tasks = [
+            asyncio.create_task(self._monitor_system_metrics()),
+            asyncio.create_task(self._monitor_active_alerts())
+        ]
+
+    async def _monitor_system_metrics(self) -> None:
+        """Monitorea métricas del sistema periódicamente."""
+        while True:
+            try:
+                # Actualizar métricas del sistema
+                self.metrics["system_load"].set(os.getloadavg()[0])
+                self.metrics["memory_usage"].set(psutil.Process().memory_info().rss)
+                
+                await asyncio.sleep(60)  # Verificar cada minuto
+                
+            except Exception as e:
+                logger.error(f"Error monitoring system metrics: {e}")
+                await asyncio.sleep(60)
+
+    async def _monitor_active_alerts(self) -> None:
+        """Monitorea y actualiza estado de alertas activas."""
+        while True:
+            try:
+                now = datetime.now()
+                
+                # Revisar alertas activas
+                for alert_id, alert in list(self.active_alerts.items()):
+                    alert_time = datetime.fromisoformat(alert["timestamp"])
+                    
+                    # Resolver alertas después de 1 hora
+                    if (now - alert_time).total_seconds() > 3600:
+                        alert["status"] = "resolved"
+                        del self.active_alerts[alert_id]
+                
+                await asyncio.sleep(300)  # Verificar cada 5 minutos
+                
+            except Exception as e:
+                logger.error(f"Error monitoring alerts: {e}")
+                await asyncio.sleep(300)
 
     async def get_metrics_report(
         self,
@@ -328,6 +374,13 @@ class MonitoringManager:
     async def cleanup(self) -> None:
         """Limpia recursos del sistema de monitoreo."""
         try:
+            # Cancelar tareas de monitoreo
+            for task in self._monitoring_tasks:
+                task.cancel()
+                
+            await asyncio.gather(*self._monitoring_tasks, return_exceptions=True)
+            
+            # Limpiar datos
             self.metrics_cache.clear()
             self.active_alerts.clear()
             
