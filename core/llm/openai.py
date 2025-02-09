@@ -52,11 +52,11 @@ class OpenAIChat(BaseLLM):
         try:
             messages = [{"role": "user", "content": prompt}]
             response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                **{**self.extra_config, **kwargs}
+            model=self.model,
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            **{**self.extra_config, **kwargs}
             )
             return response.choices[0].message.content
             

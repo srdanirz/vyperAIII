@@ -2,7 +2,11 @@ import logging
 import asyncio
 import os
 import psutil
+import numpy as np
 import json
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 import aiohttp
@@ -47,7 +51,8 @@ class MonitoringManager:
         self.active_alerts: Dict[str, Dict[str, Any]] = {}
         self.alert_history: List[Dict[str, Any]] = []
         
-        # Tareas de monitoreo
+        # Control de tareas
+        self._should_stop = False
         self._monitoring_tasks: List[asyncio.Task] = []
 
     def _setup_metrics(self) -> None:
@@ -145,109 +150,60 @@ class MonitoringManager:
             # Verificar alertas
             await self._check_alerts(metric_name, value, labels)
             
+            # Push to Prometheus si está configurado
+            if pushgateway_url := os.getenv("PROMETHEUS_PUSHGATEWAY"):
+                try:
+                    push_to_gateway(pushgateway_url, job='vyper_metrics', registry=self.registry)
+                except Exception as e:
+                    logger.error(f"Error pushing to Prometheus: {e}")
+            
         except Exception as e:
             logger.error(f"Error recording metric {metric_name}: {e}")
 
-    async def _check_alerts(
-        self,
-        metric_name: str,
-        value: float,
-        labels: Optional[Dict[str, str]] = None
-    ) -> None:
-        """Verifica si se deben generar alertas."""
-        try:
-            thresholds = {
-                "error_rate": 0.1,
-                "response_time": 5.0,
-                "cpu_usage": 80,
-                "memory_usage": 80
-            }
-
-            if metric_name in thresholds:
-                threshold = thresholds[metric_name]
-                if value > threshold:
-                    alert_id = f"{metric_name}_{datetime.now().isoformat()}"
-                    await self._send_alert(
-                        severity="warning",
-                        title=f"Metric {metric_name} exceeded threshold",
-                        description=f"Value: {value}, Threshold: {threshold}",
-                        metric_data={
-                            "metric": metric_name,
-                            "value": value,
-                            "threshold": threshold,
-                            "labels": labels
-                        }
-                    )
-            
-        except Exception as e:
-            logger.error(f"Error checking alerts: {e}")
-
-    async def _send_alert(
-        self,
-        severity: str,
-        title: str,
-        description: str,
-        metric_data: Dict[str, Any]
-    ) -> None:
-        """Envía una alerta."""
-        try:
-            alert = {
-                "id": f"alert_{datetime.now().isoformat()}",
-                "severity": severity,
-                "title": title,
-                "description": description,
-                "metric_data": metric_data,
-                "timestamp": datetime.now().isoformat(),
-                "status": "active"
-            }
-
-            # Registrar alerta
-            self.active_alerts[alert["id"]] = alert
-            self.alert_history.append(alert)
-
-            # Enviar a Slack si está configurado
-            if slack_webhook := os.getenv("SLACK_WEBHOOK_URL"):
-                await self._send_slack_alert(alert, slack_webhook)
-
-            # Enviar por email si está configurado
-            if email_config := os.getenv("ALERT_EMAIL"):
-                await self._send_email_alert(alert, email_config)
-
-            logger.warning(f"Alert triggered: {title}")
-            
-        except Exception as e:
-            logger.error(f"Error sending alert: {e}")
-
-    async def _send_slack_alert(
+    async def _send_email_alert(
         self,
         alert: Dict[str, Any],
-        webhook_url: str
+        email_config: str
     ) -> None:
-        """Envía alerta a Slack."""
+        """Envía alerta por correo electrónico."""
         try:
-            async with aiohttp.ClientSession() as session:
-                await session.post(
-                    webhook_url,
-                    json={
-                        "text": f"🚨 *{alert['title']}*\n"
-                               f"{alert['description']}\n"
-                               f"Severity: {alert['severity']}\n"
-                               f"Metric Data: ```{json.dumps(alert['metric_data'], indent=2)}```"
-                    }
-                )
+            # Obtener configuración de email
+            smtp_host = os.getenv("SMTP_HOST", "localhost")
+            smtp_port = int(os.getenv("SMTP_PORT", "587"))
+            smtp_user = os.getenv("SMTP_USER")
+            smtp_pass = os.getenv("SMTP_PASS")
+            
+            # Crear mensaje
+            msg = MIMEMultipart()
+            msg['From'] = smtp_user
+            msg['To'] = email_config
+            msg['Subject'] = f"Alert: {alert['title']}"
+            
+            body = f"""
+            Alert Details:
+            Severity: {alert['severity']}
+            Description: {alert['description']}
+            Timestamp: {alert['timestamp']}
+            
+            Metric Data:
+            {json.dumps(alert['metric_data'], indent=2)}
+            """
+            
+            msg.attach(MIMEText(body, 'plain'))
+            
+            # Enviar email
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                if smtp_user and smtp_pass:
+                    server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+                
         except Exception as e:
-            logger.error(f"Error sending Slack alert: {e}")
-
-    def _start_monitoring(self) -> None:
-        """Inicia tareas de monitoreo periódico."""
-        self._monitoring_tasks = [
-            asyncio.create_task(self._monitor_system_metrics()),
-            asyncio.create_task(self._monitor_active_alerts())
-        ]
+            logger.error(f"Error sending email alert: {e}")
 
     async def _monitor_system_metrics(self) -> None:
         """Monitorea métricas del sistema periódicamente."""
-        while True:
+        while not self._should_stop:
             try:
                 # Actualizar métricas del sistema
                 self.metrics["system_load"].set(os.getloadavg()[0])
@@ -261,7 +217,7 @@ class MonitoringManager:
 
     async def _monitor_active_alerts(self) -> None:
         """Monitorea y actualiza estado de alertas activas."""
-        while True:
+        while not self._should_stop:
             try:
                 now = datetime.now()
                 
@@ -374,6 +330,9 @@ class MonitoringManager:
     async def cleanup(self) -> None:
         """Limpia recursos del sistema de monitoreo."""
         try:
+            # Señalizar detención de monitoreo
+            self._should_stop = True
+            
             # Cancelar tareas de monitoreo
             for task in self._monitoring_tasks:
                 task.cancel()
@@ -392,6 +351,7 @@ class MonitoringManager:
             
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
+
 
     async def get_status(self) -> Dict[str, Any]:
         """Obtiene estado del sistema de monitoreo."""

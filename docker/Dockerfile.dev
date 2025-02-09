@@ -1,0 +1,50 @@
+# Usar una imagen base oficial de Python
+FROM python:3.9-slim-buster
+
+# Establecer variables de entorno
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=off \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100 \
+    POETRY_VERSION=1.4.2 \
+    POETRY_HOME="/opt/poetry" \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_NO_INTERACTION=1
+
+# Instalar dependencias del sistema
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        git \
+        nodejs \
+        npm \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalar Poetry
+RUN curl -sSL https://install.python-poetry.org | python3 -
+ENV PATH="${POETRY_HOME}/bin:$PATH"
+
+# Crear y establecer el directorio de trabajo
+WORKDIR /app
+
+# Copiar archivos de configuración
+COPY pyproject.toml poetry.lock ./
+COPY .env.example .env
+
+# Instalar dependencias
+RUN poetry install --no-root
+
+# Instalar herramientas de desarrollo
+RUN poetry run pip install pytest-watch pytest-cov black isort mypy
+
+# Copiar el código fuente
+COPY . .
+
+# Exponer puertos necesarios
+EXPOSE 8000
+
+# Iniciar shell para desarrollo
+CMD ["poetry", "shell"]
