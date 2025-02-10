@@ -1,13 +1,14 @@
 import logging
 import asyncio
 import pickle
+import zlib
+import base64
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Set, Union
 from concurrent.futures import ThreadPoolExecutor
-import base64
-import json
 import hashlib
+import json
 
 from .errors import ProcessingError, handle_errors, ErrorBoundary
 from .interfaces import PerformanceMetrics, ResourceUsage
@@ -31,7 +32,8 @@ class CacheManager:
         cache_dir: str = "cache",
         max_memory_items: int = 1000,
         max_disk_items: int = 10000,
-        expiration_hours: int = 24
+        expiration_hours: int = 24,
+        compression_level: int = 6
     ):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
@@ -40,6 +42,7 @@ class CacheManager:
         self.max_memory_items = max_memory_items
         self.max_disk_items = max_disk_items
         self.expiration_hours = expiration_hours
+        self.compression_level = compression_level
         
         # Caches
         self.memory_cache: Dict[str, Any] = {}
@@ -57,9 +60,15 @@ class CacheManager:
         self.metrics = PerformanceMetrics(
             resource_usage=ResourceUsage()
         )
+        
+        # Initialization flag
+        self._initialized = False
 
     async def initialize(self) -> None:
         """Initialize the cache system."""
+        if self._initialized:
+            return
+            
         try:
             # Start maintenance tasks
             self._save_task = asyncio.create_task(self._periodic_save())
@@ -67,11 +76,31 @@ class CacheManager:
             
             # Load persistent cache
             await self._load_cache()
+            
+            self._initialized = True
             logger.info("Cache system initialized")
             
         except Exception as e:
             logger.error(f"Error initializing cache: {e}")
             raise ProcessingError("Cache initialization failed", {"error": str(e)})
+
+    def _compress_data(self, data: bytes) -> bytes:
+        """Compress data using zlib."""
+        try:
+            compressed = zlib.compress(data, level=self.compression_level)
+            return base64.b64encode(compressed)
+        except Exception as e:
+            logger.error(f"Error compressing data: {e}")
+            return data
+
+    def _decompress_data(self, data: bytes) -> bytes:
+        """Decompress data using zlib."""
+        try:
+            decompressed = base64.b64decode(data)
+            return zlib.decompress(decompressed)
+        except Exception as e:
+            logger.error(f"Error decompressing data: {e}")
+            return data
 
     @handle_errors(default_return=None)
     async def get(self, key: str) -> Optional[Any]:
@@ -130,6 +159,12 @@ class CacheManager:
             value: Value to store
             ttl: Time to live in seconds (optional)
         """
+        # Validate value can be pickled
+        try:
+            pickle.dumps(value)
+        except Exception as e:
+            raise ProcessingError(f"Value cannot be pickled: {e}")
+        
         # Prepare data
         cache_data = {
             "timestamp": datetime.now().isoformat(),
@@ -175,7 +210,9 @@ class CacheManager:
         """Read and deserialize a cache file."""
         try:
             with open(path, 'rb') as f:
-                return pickle.load(f)
+                data = f.read()
+                decompressed = self._decompress_data(data)
+                return pickle.loads(decompressed)
         except Exception as e:
             logger.error(f"Error reading file {path}: {e}")
             return None
@@ -194,8 +231,10 @@ class CacheManager:
     def _write_file(self, path: Path, data: Dict[str, Any]) -> None:
         """Serialize and write data to a file."""
         try:
+            serialized = pickle.dumps(data)
+            compressed = self._compress_data(serialized)
             with open(path, 'wb') as f:
-                pickle.dump(data, f)
+                f.write(compressed)
         except Exception as e:
             logger.error(f"Error writing file {path}: {e}")
             raise ProcessingError("File write failed", {"path": str(path)})
@@ -335,17 +374,14 @@ class CacheManager:
             "memory_cache_size": len(self.memory_cache),
             "disk_cache_size": len(list(self.cache_dir.glob("*.cache"))),
             "modified_keys": len(self.modified_keys),
-            "performance_metrics": {
-                "total_requests": self.metrics.total_requests,
-                "cache_hits": self.metrics.cache_hits,
-                "cache_misses": self.metrics.cache_misses,
-                "hit_ratio": (
-                    self.metrics.cache_hits / 
-                    (self.metrics.cache_hits + self.metrics.cache_misses)
-                    if (self.metrics.cache_hits + self.metrics.cache_misses) > 0
-                    else 0
-                )
-            }
+            "cache_hits": self.metrics.cache_hits,
+            "cache_misses": self.metrics.cache_misses,
+            "hit_ratio": (
+                self.metrics.cache_hits / 
+                (self.metrics.cache_hits + self.metrics.cache_misses)
+                if (self.metrics.cache_hits + self.metrics.cache_misses) > 0
+                else 0
+            )
         }
 
     async def cleanup(self) -> None:
@@ -375,6 +411,9 @@ class CacheManager:
             self.access_times.clear()
             self.modified_keys.clear()
             
+            # Reset metrics
+            self.metrics = PerformanceMetrics(resource_usage=ResourceUsage())
+            
             # Shutdown executor
             self._executor.shutdown(wait=True)
             
@@ -382,3 +421,15 @@ class CacheManager:
             
         except Exception as e:
             logger.error(f"Error during cache cleanup: {e}")
+
+    async def get_status(self) -> Dict[str, Any]:
+        """Get current system status."""
+        return {
+            "initialized": self._initialized,
+            "active_tasks": {
+                "save": bool(self._save_task and not self._save_task.done()),
+                "cleanup": bool(self._cleanup_task and not self._cleanup_task.done())
+            },
+            "cache_stats": await self.get_stats(),
+            "system_metrics": self.metrics
+        }

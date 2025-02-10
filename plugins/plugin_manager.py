@@ -2,6 +2,7 @@ import logging
 import asyncio
 import importlib
 import inspect
+import ast
 from typing import Dict, Any, List, Optional, Type, Callable, Set
 from pathlib import Path
 from datetime import datetime
@@ -12,6 +13,57 @@ from core.errors import ProcessingError, handle_errors, ErrorBoundary
 from .base_plugin import BasePlugin, hook
 
 logger = logging.getLogger(__name__)
+
+class CodeTransformer(ast.NodeTransformer):
+    """AST transformer for modifying plugin code."""
+    
+    def __init__(self, modifications: List[Dict[str, Any]]):
+        self.modifications = modifications
+        super().__init__()
+        
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        """Modify function definitions."""
+        for mod in self.modifications:
+            if mod.get("target") == "function" and mod.get("name") == node.name:
+                if "new_name" in mod:
+                    node.name = mod["new_name"]
+                if "decorators" in mod:
+                    node.decorator_list.extend([
+                        ast.Name(id=dec, ctx=ast.Load())
+                        for dec in mod["decorators"]
+                    ])
+                if "async" in mod:
+                    if mod["async"] and not isinstance(node, ast.AsyncFunctionDef):
+                        return ast.AsyncFunctionDef(
+                            name=node.name,
+                            args=node.args,
+                            body=node.body,
+                            decorator_list=node.decorator_list,
+                            returns=node.returns
+                        )
+        return self.generic_visit(node)
+        
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.ClassDef:
+        """Modify class definitions."""
+        for mod in self.modifications:
+            if mod.get("target") == "class" and mod.get("name") == node.name:
+                if "new_name" in mod:
+                    node.name = mod["new_name"]
+                if "bases" in mod:
+                    node.bases = [
+                        ast.Name(id=base, ctx=ast.Load())
+                        for base in mod["bases"]
+                    ]
+        return self.generic_visit(node)
+        
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
+        """Modify assignments."""
+        for mod in self.modifications:
+            if mod.get("target") == "assignment":
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == mod.get("name"):
+                        node.value = ast.parse(mod["value"]).body[0].value
+        return self.generic_visit(node)
 
 class PluginManager:
     """
@@ -133,98 +185,6 @@ class PluginManager:
                 "plugin": plugin_name,
                 "error": str(e)
             }
-            return False
-
-    @handle_errors()
-    async def execute_hook(
-        self,
-        hook_name: str,
-        *args,
-        **kwargs
-    ) -> List[Any]:
-        """
-        Ejecuta los hooks registrados para un evento.
-        
-        Args:
-            hook_name: Nombre del hook a ejecutar
-            args, kwargs: Argumentos para el hook
-        """
-        try:
-            if hook_name not in self.hooks:
-                return []
-            
-            results = []
-            start_time = datetime.now()
-            
-            # Ejecutar hooks en paralelo
-            tasks = [
-                self._execute_single_hook(hook, *args, **kwargs)
-                for hook in self.hooks[hook_name]
-            ]
-            
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Actualizar métricas
-            execution_time = (datetime.now() - start_time).total_seconds()
-            if hook_name not in self.metrics["execution_times"]:
-                self.metrics["execution_times"][hook_name] = []
-            self.metrics["execution_times"][hook_name].append(execution_time)
-            
-            # Filtrar errores
-            return [
-                r for r in results
-                if not isinstance(r, Exception)
-            ]
-            
-        except Exception as e:
-            logger.error(f"Error executing hook {hook_name}: {e}")
-            return []
-
-    async def reload_plugin(self, plugin_name: str) -> bool:
-        """
-        Recarga un plugin en caliente.
-        
-        Args:
-            plugin_name: Nombre del plugin a recargar
-        """
-        try:
-            # Descargar plugin actual
-            if plugin_name in self.plugins:
-                await self.unload_plugin(plugin_name)
-            
-            # Recargar
-            return await self.load_plugin(plugin_name)
-            
-        except Exception as e:
-            logger.error(f"Error reloading plugin {plugin_name}: {e}")
-            return False
-
-    async def unload_plugin(self, plugin_name: str) -> bool:
-        """
-        Descarga un plugin.
-        
-        Args:
-            plugin_name: Nombre del plugin a descargar
-        """
-        try:
-            if plugin_name not in self.plugins:
-                return False
-            
-            # Ejecutar limpieza del plugin
-            plugin = self.plugins[plugin_name]
-            await plugin.cleanup()
-            
-            # Eliminar hooks
-            self._unregister_hooks(plugin)
-            
-            # Eliminar plugin
-            del self.plugins[plugin_name]
-            self.metrics["loaded_plugins"] -= 1
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error unloading plugin {plugin_name}: {e}")
             return False
 
     def _load_plugin_config(self) -> None:

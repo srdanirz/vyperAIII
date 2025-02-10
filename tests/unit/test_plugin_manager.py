@@ -1,7 +1,10 @@
 import pytest
+import asyncio
 from pathlib import Path
-from unittest.mock import Mock, patch
-from plugins.plugin_manager import PluginManager
+from unittest.mock import Mock, patch, AsyncMock
+import ast
+
+from plugins.plugin_manager import PluginManager, CodeTransformer
 from plugins.base_plugin import BasePlugin, hook
 
 # Plugin de prueba
@@ -58,6 +61,52 @@ async def test_hook_execution(plugin_manager):
     
     assert len(results) == 1
     assert results[0] == "Processed: test_data"
+
+@pytest.mark.asyncio
+async def test_code_transformer():
+    # Crear transformador con modificaciones de prueba
+    modifications = [
+        {
+            "target": "function",
+            "name": "test_function",
+            "new_name": "modified_function",
+            "async": True,
+            "decorators": ["test_decorator"]
+        },
+        {
+            "target": "class",
+            "name": "TestClass",
+            "new_name": "ModifiedClass",
+            "bases": ["NewBase"]
+        }
+    ]
+    
+    transformer = CodeTransformer(modifications)
+    
+    # Código de prueba
+    test_code = """
+def test_function():
+    return "test"
+
+class TestClass:
+    def method(self):
+        pass
+    """
+    
+    # Parsear y transformar
+    tree = ast.parse(test_code)
+    modified_tree = transformer.visit(tree)
+    
+    # Verificar transformaciones
+    for node in ast.walk(modified_tree):
+        if isinstance(node, ast.AsyncFunctionDef):
+            assert node.name == "modified_function"
+            assert any(d.id == "test_decorator" for d in node.decorator_list)
+        elif isinstance(node, ast.ClassDef):
+            assert node.name == "ModifiedClass"
+            assert len(node.bases) == 1
+            assert isinstance(node.bases[0], ast.Name)
+            assert node.bases[0].id == "NewBase"
 
 @pytest.mark.asyncio
 async def test_plugin_reload(plugin_manager):
@@ -123,6 +172,9 @@ async def test_hook_timeout():
     
     # Plugin con hook que tarda demasiado
     class SlowPlugin(BasePlugin):
+        def __init__(self):
+            super().__init__("slow_plugin")
+            
         async def setup(self, config):
             await super().setup(config)
         
@@ -131,7 +183,7 @@ async def test_hook_timeout():
             await asyncio.sleep(0.2)
             return "Done"
     
-    plugin = SlowPlugin("slow_plugin")
+    plugin = SlowPlugin()
     await plugin.setup({})
     manager.plugins["slow_plugin"] = plugin
     manager._register_hooks(plugin)
@@ -143,52 +195,64 @@ async def test_hook_timeout():
     await manager.cleanup()
 
 @pytest.mark.asyncio
-async def test_metrics_collection(plugin_manager):
-    # Cargar plugin y ejecutar algunas operaciones
-    plugin = TestPlugin()
-    await plugin.setup({})
-    plugin_manager.plugins["test_plugin"] = plugin
-    plugin_manager._register_hooks(plugin)
+async def test_transform_existing_plugin(plugin_manager):
+    # Código de plugin original
+    original_code = """
+class MyPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__("my_plugin")
     
-    await plugin_manager.execute_hook("test_hook", "data1")
-    await plugin_manager.execute_hook("test_hook", "data2")
+    def sync_method(self):
+        return "sync"
+    """
     
-    # Verificar métricas
-    metrics = await plugin_manager.get_all_metrics()
+    # Crear transformaciones
+    modifications = [
+        {
+            "target": "function",
+            "name": "sync_method",
+            "async": True,
+            "decorators": ["hook('test')"]
+        }
+    ]
     
-    assert metrics["total_plugins"] == 1
-    assert metrics["active_hooks"] >= 1
-    assert "test_hook" in metrics["performance"]
-    assert metrics["performance"]["test_hook"]["total_executions"] == 2
+    # Aplicar transformación
+    transformer = CodeTransformer(modifications)
+    tree = ast.parse(original_code)
+    modified_tree = transformer.visit(tree)
+    
+    # Verificar cambios
+    method_found = False
+    for node in ast.walk(modified_tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "sync_method":
+            method_found = True
+            assert len(node.decorator_list) == 1
+            
+    assert method_found
 
 @pytest.mark.asyncio
-async def test_health_check(plugin_manager):
-    # Estado saludable
-    plugin = TestPlugin()
-    await plugin.setup({})
-    plugin_manager.plugins["test_plugin"] = plugin
-    plugin_manager._register_hooks(plugin)
+async def test_concurrent_hook_execution(plugin_manager):
+    # Preparar múltiples hooks
+    hooks = []
+    for i in range(5):
+        plugin = TestPlugin()
+        await plugin.setup({})
+        plugin_manager.plugins[f"test_plugin_{i}"] = plugin
+        plugin_manager._register_hooks(plugin)
+        hooks.append(plugin.test_hook_method)
     
-    assert plugin_manager._check_health()
+    # Ejecutar hooks concurrentemente
+    tasks = [
+        plugin_manager.execute_hook("test_hook", f"data_{i}")
+        for i in range(5)
+    ]
     
-    # Estado degradado (muchos errores)
-    plugin_manager.metrics["failed_loads"] = 10
-    assert not plugin_manager._check_health()
+    results = await asyncio.gather(*tasks)
+    
+    # Verificar resultados
+    assert len(results) == 5
+    assert all(len(r) > 0 for r in results)
+    assert all("Processed:" in r[0] for r in results)
 
-@pytest.mark.asyncio
-async def test_status_report(plugin_manager):
-    # Cargar plugin
-    plugin = TestPlugin()
-    await plugin.setup({})
-    plugin_manager.plugins["test_plugin"] = plugin
-    plugin_manager._register_hooks(plugin)
-    
-    # Obtener estado
-    status = await plugin_manager.get_status()
-    
-    assert "active_plugins" in status
-    assert "hooks" in status
-    assert "metrics" in status
-    assert "config" in status
-    assert "health" in status
-    assert "timestamp" in status
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--cov=plugins.plugin_manager"])
