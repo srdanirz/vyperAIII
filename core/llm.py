@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Optional
 from langchain_openai import ChatOpenAI
-from deepseek_chat import core.llm
+from core.llm.deepseek import DeepSeekChat
 from .errors import ConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ class LLMProvider:
         },
         "deepseek": {
             "default_model": "deepseek-chat",
-            "class": core.llm
+            "class": DeepSeekChat.llm
         }
     }
 

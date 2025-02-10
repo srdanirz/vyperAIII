@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Union
 from rich.console import Console
 
+
 logger = logging.getLogger(__name__)
 console = Console()
 
@@ -25,8 +26,8 @@ class AgentCommunicationSystem:
         
         # Crear LLM según el modo
         if engine_mode == "deepseek":
-            from deepseek_chat import core.llm
-            self.llm = core.llm(api_key=api_key)
+            from core.llm.deepseek import DeepSeekChat
+            self.llm = DeepSeekChat.llm(api_key=api_key)
         else:
             from langchain_openai import ChatOpenAI
             self.llm = ChatOpenAI(
