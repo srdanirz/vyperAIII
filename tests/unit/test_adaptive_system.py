@@ -4,6 +4,7 @@ from datetime import datetime
 from unittest.mock import Mock, AsyncMock, patch
 import numpy as np
 
+from core.llm import get_llm  # Corregida la importación
 from core.adaptive import AdaptiveSystem
 from core.adaptive import ADAPTATION_MODES, ADAPTATION_TYPES
 
